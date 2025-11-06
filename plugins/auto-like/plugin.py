@@ -25,5 +25,19 @@ class AutoLikePlugin(NcatBotPlugin):
     async def like_command(self, event: BaseMessageEvent):
         status = await self.api.get_status()
         _logger.info(f"User {event.user_id} liked their profile. Status: {status}")
-        
-        await self.api.send_like(event.user_id, LikeCount.MAX_LIKE_COUNT)
+
+        for i in range(0, 50):
+            response = await self.api.send_like(event.user_id)
+            if response["retcode"] == 1200 and response["status"] == "failed":
+                _logger.info(f"Failed to like profile {i + 1} times. because: {response['msg']}")
+                await self.api.send_group_msg(event.group_id, [ 
+                    { 
+                        "type": "text", 
+                        "data": { 
+                            "text" : f"点赞失败，原因：点赞次数达到最大上限哦"
+                        } 
+                    },
+                ])
+                break
+            else:
+                _logger.info(f"Successfully liked profile {i + 1} times.")
