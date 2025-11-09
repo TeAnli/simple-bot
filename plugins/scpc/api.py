@@ -10,12 +10,11 @@ def user_info_url(username: str) -> str:
 def codeforces_contests_url(include_gym: bool = False) -> str:
     return f'https://codeforces.com/api/contest.list?gym={str(include_gym).lower()}'
 
-def scpc_contests_url(page: int = 1, page_size: int = 20) -> str:
-    """SCPC 比赛列表接口（可能随平台变动，保持容错）。"""
-    # 常见约定：分页参数 page/pageSize，如不支持则后端忽略
-    return f'http://scpc.fun/api/contest/list?page={page}&pageSize={page_size}'
+def luogu_contests_url(page: int = 1) -> str:
+    return f'https://www.luogu.com.cn/contest/list?_contentOnly=1&page={page}'
 
 def scpc_contests_url(current_page: int = 0, limit: int = 10) -> str:
     return f'http://scpc.fun/api/get-contest-list?currentPage={current_page}&limit={limit}'
 
-
+def codeforces_user_rating_url(username: str) -> str:
+    return f'https://codeforces.com/api/user.rating?handle={username}'
