@@ -1,5 +1,12 @@
 from datetime import datetime
 import math
+from functools import wraps
+from typing import Callable
+from ncatbot.plugin_system import NcatBotPlugin
+from ncatbot.core.event import BaseMessageEvent
+from ncatbot.utils import get_log
+
+_logger = get_log()
 
 def format_timestamp(timestamp: int, format: str = "%Y-%m-%d %H:%M") -> str:
     """ 将tiemstamp数字格式化 """
@@ -113,3 +120,29 @@ def calculate_accept_ratio(total_count: int, accept_count: int) -> float:
     if total_count == 0:
         return 0.0
     return accept_count / total_count
+
+def require_sender_admin():
+    """
+    用于群聊命令的权限过滤装饰器：仅允许群管理员/群主使用被装饰的命令。
+    """
+    def decorator(func: Callable):
+        @wraps(func)
+        async def wrapper(self: NcatBotPlugin, event: BaseMessageEvent, *args, **kwargs):
+            group_id = getattr(event, "group_id", None)
+            user_id = getattr(event, "user_id", None)
+            if group_id is None or user_id is None:
+                return await func(self, event, *args, **kwargs)
+            try:
+                member_info = await self.api.get_group_member_info(
+                    group_id=group_id,
+                    user_id=user_id,
+                )
+                if member_info.role == "owner" or member_info.role == "admin":
+                    return await func(self, event, *args, **kwargs)
+                return await event.reply("您不是群管理员或群主，无法执行此命令。")
+            except Exception as e:
+                _logger.warning(f"Failed to get sender's group role: {e}")
+                await event.reply("无法获取您的群成员信息，暂时无法执行该命令。")
+                return
+        return wrapper
+    return decorator
