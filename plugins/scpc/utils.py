@@ -121,7 +121,7 @@ def calculate_accept_ratio(total_count: int, accept_count: int) -> float:
         return 0.0
     return accept_count / total_count
 
-def require_sender_admin():
+def group_member_filter():
     """
     用于群聊命令的权限过滤装饰器：仅允许群管理员/群主使用被装饰的命令。
     """
