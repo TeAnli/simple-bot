@@ -11,40 +11,14 @@ from ncatbot.core.event import BaseMessageEvent
 from ncatbot.utils import get_log
 
 import random
-import requests
 import os
 import time
 from . import api
-from .utils import build_text_msg, calculate_accept_ratio, format_contest_text, parse_scpc_time
+from .utils import build_text_msg, calculate_accept_ratio, format_contest_text, parse_scpc_time, require_sender_admin
 
 _logger = get_log()
 
-# 过滤器装饰器：判断“命令发送者”是否为群管理员/群主
-def require_sender_admin():
-    """
-    用于群聊命令的权限过滤装饰器：仅允许群管理员/群主使用被装饰的命令。
-    """
-    def decorator(func: Callable):
-        @wraps(func)
-        async def wrapper(self: NcatBotPlugin, event: BaseMessageEvent, *args, **kwargs):
-            group_id = getattr(event, "group_id", None)
-            user_id = getattr(event, "user_id", None)
-            if group_id is None or user_id is None:
-                return await func(self, event, *args, **kwargs)
-            try:
-                member_info = await self.api.get_group_member_info(
-                    group_id=group_id,
-                    user_id=user_id,
-                )
-                if member_info.role == "owner" or member_info.role == "admin":
-                    return await func(self, event, *args, **kwargs)
-                return await event.reply("您不是群管理员或群主，无法执行此命令。")
-            except Exception as e:
-                _logger.warning(f"Failed to get sender's group role: {e}")
-                await event.reply("无法获取您的群成员信息，暂时无法执行该命令。")
-                return
-        return wrapper
-    return decorator
+# 过滤器装饰器已移至 utils.py
 
 class SCPCPlugin(NcatBotPlugin):
     name = 'SCPC'
@@ -92,25 +66,7 @@ class SCPCPlugin(NcatBotPlugin):
     async def _send_text(self, group_id, text: str):
         await self._send(group_id, [build_text_msg(text)])
 
-    # 通用 HTTP 请求封装：统一状态码校验与 JSON 解析
-    def _fetch_json(self, url: str, timeout: int = 10):
-        """请求指定 URL 并返回 JSON 数据。
-        - 统一处理网络异常/状态码错误
-        - 失败时返回 None
-        """
-        try:
-            resp = requests.get(url, headers=api.headers, timeout=timeout)
-        except Exception as e:
-            _logger.warning(f'HTTP request failed: {e}')
-            return None
-        if getattr(resp, 'status_code', 0) != 200:
-            _logger.warning(f'Bad status fetching {url}: {resp.status_code} {getattr(resp, "text", "")}')
-            return None
-        try:
-            return resp.json()
-        except Exception as e:
-            _logger.warning(f'JSON decode failed: {e}')
-            return None
+    # HTTP 获取逻辑已下沉到 api.py
 
     # 统一群发文本：只向开启监听的群发送
     async def _broadcast_text(self, text: str):
@@ -161,16 +117,10 @@ class SCPCPlugin(NcatBotPlugin):
         return name, state, remaining_label, remaining_secs, duration, start_ts, sort_key
     # 检测 codeforces 比赛 threshold_hours 用于 接收小时数
     async def _check_cf_contests_and_notify(self, threshold_hours: int = 2):
-        contests_url = api.codeforces_contests_url()
-        data = self._fetch_json(contests_url, timeout=10)
-        if not data:
-            _logger.warning('Failed to fetch Codeforces contests: no data')
+        contests = api.get_codeforces_contests()
+        if not contests:
+            _logger.warning('Failed to fetch Codeforces contests: no data or bad status')
             return
-        if data.get('status') != 'OK':
-            _logger.warning(f'Codeforces API not OK: {data}')
-            return
-
-        contests = data.get('result', [])
         threshold_seconds = int(threshold_hours * 3600)
         upcoming_texts = []
 
@@ -215,15 +165,13 @@ class SCPCPlugin(NcatBotPlugin):
         await self.api.send_group_image(event.group_id, f'plugins/scpc/assets/image{random_id}.png')
     @command_registry.command('scpc信息', description='查询scpc网站的个人信息')
     async def get_user_info(self, event: BaseMessageEvent, username: str):
-        # 使用统一请求封装，确保稳定与错误提示
-        user_info_url = api.user_info_url(username)
-        body = self._fetch_json(user_info_url, timeout=10)
-        if not body or 'data' not in body:
-            _logger.warning(f'Failed to fetch SCPC user info for {username}: {body}')
+        # 使用 api.py 封装的获取函数
+        data = api.get_scpc_user_info(username)
+        if not data:
+            _logger.warning(f'Failed to fetch SCPC user info for {username}')
             await self._send_text(event.group_id, "暂时无法获取 SCPC 用户信息, 请稍后重试")
             return
 
-        data = body['data']
         _logger.info(f'Fetching SCPC user info: {data}')
         total = int(data.get('total', 0))
         solved_list = data.get('solvedList') or []
@@ -255,15 +203,13 @@ class SCPCPlugin(NcatBotPlugin):
         await self._send_text(event.group_id, "已为本群关闭比赛监听任务。")
 
     async def _get_codeforces_contests(self, group_id: int):
-        contests_url = api.codeforces_contests_url()
-        body = self._fetch_json(contests_url, timeout=10)
-        if body and body.get('status') == 'OK':
-            data = body.get('result', [])
-            _logger.info(f'Fetching Codeforces contests: received {len(data)} contests')
+        contests = api.get_codeforces_contests()
+        if contests is not None:
+            _logger.info(f'Fetching Codeforces contests: received {len(contests)} contests')
 
             # 收集即将开始与进行中的比赛
             collected = []  # (time_remaining_seconds, formatted_text)
-            for contest in data:
+            for contest in contests:
                 timing = self._extract_cf_timing(contest)
                 if not timing:
                     continue
@@ -295,18 +241,11 @@ class SCPCPlugin(NcatBotPlugin):
     @command_registry.command("scpc比赛", description="获取SCPC比赛信息")
     async def get_scpc_contests(self, event: BaseMessageEvent):
         """从 SCPC 平台获取比赛列表，展示即将开始与进行中的比赛。"""
-        contests_url = api.scpc_contests_url()
-        body = self._fetch_json(contests_url, timeout=10)
-        if not body:
+        records = api.get_scpc_contests()
+        if records is None:
             _logger.warning('Fetch SCPC contests failed: no data')
             await self._send_text(event.group_id, "暂时无法获取 SCPC 比赛信息, 请稍后重试")
             return
-        # 兼容多种返回结构：data.records 或 records
-        records = (
-            body.get('data', {}).get('records')
-            or body.get('records')
-            or []
-        )
         collected = []  # (sort_key, text)
         now_ts = int(datetime.now().timestamp())
         for record in records:
@@ -336,17 +275,15 @@ class SCPCPlugin(NcatBotPlugin):
     
     @command_registry.command("cf积分", description='获取codeforces比赛信息')
     async def get_codeforces_user_rating(self, event: BaseMessageEvent, username: str):
-        user_rating_url = api.codeforces_user_rating_url(username)
-        body = self._fetch_json(user_rating_url, timeout=10)
-        if body and body.get('status') == 'OK':
-            data = body.get('result', [])
-            _logger.info(f'Fetching Codeforces user rating: {len(data)} records')
+        ratings = api.get_codeforces_user_rating(username)
+        if ratings is not None:
+            _logger.info(f'Fetching Codeforces user rating: {len(ratings)} records')
 
-            if not data:
+            if not ratings:
                 await self._send_text(event.group_id, f"用户 {username} 没有比赛记录。")
                 return
                 
-            last_contest = data[-1]
+            last_contest = ratings[-1]
             ratings_text = (
                 f"新积分: {last_contest['newRating']}\n"
             )
