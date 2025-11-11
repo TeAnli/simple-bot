@@ -14,7 +14,14 @@ import random
 import os
 import time
 from . import api
-from .utils import build_text_msg, calculate_accept_ratio, format_contest_text, parse_scpc_time, require_sender_admin
+from .utils import (
+    calculate_accept_ratio,
+    format_contest_text,
+    parse_scpc_time,
+    require_sender_admin,
+    send_group_text,
+    broadcast_text,
+)
 
 _logger = get_log()
 
@@ -57,23 +64,12 @@ class SCPCPlugin(NcatBotPlugin):
         # 检查 CF 比赛并在距离开始 1 小时内提醒
         await self._check_cf_contests_and_notify(threshold_hours=2)
         
-    async def _send(self, group_id, messages):
-        try:
-            await self.api.send_group_msg(group_id, messages)
-        except Exception as e:
-            _logger.warning(f'Send group message failed: {e}')
-
-    async def _send_text(self, group_id, text: str):
-        await self._send(group_id, [build_text_msg(text)])
+    # 发送消息相关工具函数已提取至 utils.py
 
     # HTTP 获取逻辑已下沉到 api.py
 
     # 统一群发文本：只向开启监听的群发送
-    async def _broadcast_text(self, text: str):
-        """广播文本到所有开启监听的群聊。"""
-        for gid, enabled in self.group_listeners.items():
-            if enabled:
-                await self._send_text(gid, text)
+    # 广播文本工具函数已提取至 utils.py
 
     # 提取 CF 比赛时间信息：状态、剩余时间标签与秒数、时长、开始时间
     def _extract_cf_timing(self, contest: dict):
@@ -155,7 +151,7 @@ class SCPCPlugin(NcatBotPlugin):
 
         merged = "\n\n".join([t for _, t in upcoming_texts])
         # 统一群发
-        await self._broadcast_text(merged)
+        await broadcast_text(self.api, self.group_listeners, merged)
 
     @command_registry.command('来个男神', description='随机发送一张男神照片')
     @require_sender_admin()
@@ -188,19 +184,19 @@ class SCPCPlugin(NcatBotPlugin):
             f"AC数: {len(solved_list)}\n"
             f"题目通过率: {accept_ratio}%"
         )
-        await self._send_text(event.group_id, user_text)
+        await send_group_text(self.api, event.group_id, user_text)
     @command_registry.command('添加比赛监听器', description='为当前群开启比赛监听任务')
     @require_sender_admin()
     async def add_contest_listener(self, event: BaseMessageEvent):
         _logger.info(f'User {event} added contest listener for contest')
         self.group_listeners[event.group_id] = True
-        await self._send_text(event.group_id, "已为本群开启比赛监听任务（每小时检查一次）。")
+        await send_group_text(self.api, event.group_id, "已为本群开启比赛监听任务（每小时检查一次）。")
     @command_registry.command('移除比赛监听器', description='为当前群关闭比赛监听任务')
     @require_sender_admin()
     async def remove_contest_listener(self, event: BaseMessageEvent):
         _logger.info(f'User {event} removed contest listener for contest')
         self.group_listeners[event.group_id] = False
-        await self._send_text(event.group_id, "已为本群关闭比赛监听任务。")
+        await send_group_text(self.api, event.group_id, "已为本群关闭比赛监听任务。")
 
     async def _get_codeforces_contests(self, group_id: int):
         contests = api.get_codeforces_contests()
@@ -231,12 +227,12 @@ class SCPCPlugin(NcatBotPlugin):
             texts = [t for _, t in collected]
 
             if texts:
-                await self._send_text(group_id, "\n\n".join(texts))
+                await send_group_text(self.api, group_id, "\n\n".join(texts))
             else:
-                await self._send_text(group_id, "近期暂无即将开始或进行中的 Codeforces 比赛")
+                await send_group_text(self.api, group_id, "近期暂无即将开始或进行中的 Codeforces 比赛")
         else:
             _logger.warning('Failed to fetch Codeforces contests: request failed or bad status')
-            await self._send_text(group_id, "暂时无法获取 Codeforces 比赛信息, 请稍后重试")
+            await send_group_text(self.api, group_id, "暂时无法获取 Codeforces 比赛信息, 请稍后重试")
 
     @command_registry.command("scpc比赛", description="获取SCPC比赛信息")
     async def get_scpc_contests(self, event: BaseMessageEvent):
@@ -244,7 +240,7 @@ class SCPCPlugin(NcatBotPlugin):
         records = api.get_scpc_contests()
         if records is None:
             _logger.warning('Fetch SCPC contests failed: no data')
-            await self._send_text(event.group_id, "暂时无法获取 SCPC 比赛信息, 请稍后重试")
+            await send_group_text(self.api, event.group_id, "暂时无法获取 SCPC 比赛信息, 请稍后重试")
             return
         collected = []  # (sort_key, text)
         now_ts = int(datetime.now().timestamp())
@@ -269,9 +265,9 @@ class SCPCPlugin(NcatBotPlugin):
         collected.sort(key=lambda x: x[0])
         texts = [t for _, t in collected]
         if texts:
-            await self._send_text(event.group_id, "\n\n".join(texts))
+            await send_group_text(self.api, event.group_id, "\n\n".join(texts))
         else:
-            await self._send_text(event.group_id, "近期暂无即将开始或进行中的 SCPC 比赛")
+            await send_group_text(self.api, event.group_id, "近期暂无即将开始或进行中的 SCPC 比赛")
     
     @command_registry.command("cf积分", description='获取codeforces比赛信息')
     async def get_codeforces_user_rating(self, event: BaseMessageEvent, username: str):
@@ -280,7 +276,7 @@ class SCPCPlugin(NcatBotPlugin):
             _logger.info(f'Fetching Codeforces user rating: {len(ratings)} records')
 
             if not ratings:
-                await self._send_text(event.group_id, f"用户 {username} 没有比赛记录。")
+                await send_group_text(self.api, event.group_id, f"用户 {username} 没有比赛记录。")
                 return
                 
             last_contest = ratings[-1]
@@ -288,10 +284,10 @@ class SCPCPlugin(NcatBotPlugin):
                 f"新积分: {last_contest['newRating']}\n"
             )
 
-            await self._send_text(event.group_id, ratings_text.strip())
+            await send_group_text(self.api, event.group_id, ratings_text.strip())
         else:
             _logger.warning('Failed to fetch Codeforces user rating: request failed or bad status')
-            await self._send_text(event.group_id, "暂时无法获取 Codeforces 用户积分信息, 请稍后重试")
+            await send_group_text(self.api, event.group_id, "暂时无法获取 Codeforces 用户积分信息, 请稍后重试")
 
     @command_registry.command("cf比赛", description='获取codeforces比赛信息')
     async def get_codeforces_contests(self, event: BaseMessageEvent):
@@ -309,7 +305,7 @@ class SCPCPlugin(NcatBotPlugin):
             from playwright.async_api import async_playwright
         except Exception as e:
             _logger.warning(f"Playwright not available: {e}")
-            await self._send_text(event.group_id, "Playwright 未安装或浏览器未就绪，请先安装依赖并执行 'playwright install'。")
+            await send_group_text(self.api, event.group_id, "Playwright 未安装或浏览器未就绪，请先安装依赖并执行 'playwright install'。")
             return
 
         try:
@@ -394,5 +390,5 @@ class SCPCPlugin(NcatBotPlugin):
             await self.api.send_group_image(event.group_id, out_path)
         except Exception as e:
             _logger.warning(f"Screenshot failed: {e}")
-            await self._send_text(event.group_id, f"无法截图该页面的榜单区块, 请联系管理人员维护")
+            await send_group_text(self.api, event.group_id, f"无法截图该页面的榜单区块, 请联系管理人员维护")
 
