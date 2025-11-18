@@ -5,7 +5,7 @@ from ncatbot.utils import get_log
 bot = BotClient()
 logger = get_log()
 
-about_infomation = """✨ 关于"安心Bot" ✨
+about_information = """✨ 关于"安心Bot" ✨
 👤 作者: 不知名人士
 🔖 版本: 0.1.0
 ⚙️ 目前基于轻量的 ncatbot QQ 机器人框架开发(后续版本将转向 nonebot2)
@@ -13,7 +13,7 @@ about_infomation = """✨ 关于"安心Bot" ✨
 🚫 请勿利用 "安心Bot" 刷屏，发表违规言论
 🤖 本程序不支持 AI 问答，也不会添加，为了防止重要消息被刷"""
 
-menu_infomation = """💖 安心Bot 菜单 💖
+menu_information = """💖 安心Bot 菜单 💖
 📖 使用说明:
 ℹ️ 关于安心 - 展示关于安心Bot界面
 🧩 命令:
@@ -53,10 +53,10 @@ async def respond_to_at(event: GroupMessageEvent) -> None:
     raw = (getattr(event, "raw_message", "") or "").strip()
     # 优先匹配带斜杠的标准命令，其次是中文关键词
     if "/菜单" in raw or "菜单" in raw:
-        await bot.api.post_group_msg(event.group_id, text=menu_infomation)
+        await bot.api.post_group_msg(event.group_id, text=menu_information)
         return
     if "/关于" in raw or "关于" in raw:
-        await bot.api.post_group_msg(event.group_id, text=about_infomation)
+        await bot.api.post_group_msg(event.group_id, text=about_information)
         return
 
 
@@ -68,6 +68,6 @@ async def on_group_message(event: GroupMessageEvent):
 
 
 if __name__ == '__main__':
-    logger.info('Starting bot...')
+    logger.info('机器人启动中...')
     bot.run()
-    logger.info('Bot stopped.')
+    logger.info('机器人已停止。')
