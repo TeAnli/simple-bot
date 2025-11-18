@@ -7,3 +7,5 @@ plugins/auto-like/__pycache__/
 plugins/scpc/__pycache__/
 
 /config.yaml
+
+.idea/

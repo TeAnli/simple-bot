@@ -23,15 +23,15 @@ class AutoLikePlugin(NcatBotPlugin):
     @command_registry.command("点赞", description="对你的名片进行点赞")
     async def like_command(self, event: BaseMessageEvent):
         status = await self.api.get_status()
-        _logger.info(f"User {event.user_id} requested like. Status: {status}")
+        _logger.info(f"用户 {event.user_id} 请求点赞，状态: {status}")
         count = 0
         try:
             for _ in range(5):
                 await self.api.send_like(event.user_id, times=10)
                 count += 10
-                _logger.info(f"Sent 10 likes in batch, total count: {count}")
+                _logger.info(f"批量发送 10 次点赞，累计: {count}")
         except Exception as e:
-            _logger.warning(f"Like action encountered an error after {count} likes: {e}")
+            _logger.warning(f"点赞过程中在累计 {count} 次后发生错误: {e}")
 
         await self.api.send_group_msg(event.group_id, [
             {
