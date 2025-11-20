@@ -16,14 +16,19 @@ from .scpc import (
     get_scpc_user_info,
     get_scpc_contests,
     extract_scpc_timing,
+    scpc_login,
+    get_scpc_contest_rank,
 )
-from .utils import (
+from .utils import ( 
     calculate_accept_ratio,
     format_contest_text,
     broadcast_text,
 )
 
 LOG = get_log()
+
+DEFAULT_SCPC_USERNAME = "player281"
+DEFAULT_SCPC_PASSWORD = "123456"
 
 class SCPCPlugin(NcatBotPlugin):
     name = 'SCPC'
@@ -213,7 +218,30 @@ class SCPCPlugin(NcatBotPlugin):
             await self.api.send_group_text(event.group_id, '\n\n'.join(texts))
         else:
             await self.api.send_group_text(event.group_id, '近期暂无即将开始或进行中的 SCPC 比赛')
-    
+    @command_registry.command("scpc排行", description='获取SCPC最近一周过题排行')
+    @group_filter
+    async def get_scpc_rank(self, event: GroupMessageEvent):
+        records = get_scpc_rank()
+        if records is None:
+            LOG.warning('获取 SCPC 排行失败：无数据')
+            await self.api.send_group_text(event.group_id, '暂时无法获取 SCPC 排行信息, 请稍后重试')
+            return
+        collected = []
+        for record in records:
+            text = format_rank_text(
+                username=record.username,
+                avatar=record.avatar,
+                titlename=record.titlename,
+                titleColor=record.titleColor,
+                ac=record.ac,
+            )
+            collected.append(text)
+        if collected:
+            await self.api.send_group_text(event.group_id, '\n\n'.join(collected))
+        else:
+            await self.api.send_group_text(event.group_id, '暂时无法获取 SCPC 排行信息, 请稍后重试')
+
+
     @command_registry.command('cf积分', description='获取codeforces比赛信息')
     @group_filter
     async def get_codeforces_user_rating(self, event: GroupMessageEvent, username: str):
@@ -239,3 +267,22 @@ class SCPCPlugin(NcatBotPlugin):
     @group_filter
     async def get_codeforces_contests(self, event: GroupMessageEvent):
         await self._get_codeforces_contests(event.group_id)
+
+    @command_registry.command('scpc比赛排行', description='获取指定比赛的过题排行，参数: 比赛ID [limit] [page]')
+    @group_filter
+    async def get_scpc_contest_rank_command(self, event: GroupMessageEvent, contest_id: int, limit: int = 50, page: int = 1):
+        username = DEFAULT_SCPC_USERNAME
+        password = DEFAULT_SCPC_PASSWORD
+        token = scpc_login(username, password)
+        if not token:
+            await self.api.send_group_text(event.group_id, '登录SCPC失败，无法获取比赛排行（请检查默认凭据）')
+            return
+        ranks = get_scpc_contest_rank(contest_id=contest_id, token=token, current_page=page, limit=limit)
+        if not ranks:
+            await self.api.send_group_text(event.group_id, '未获取到比赛排行或比赛ID无效')
+            return
+        lines = []
+        for u in ranks:
+            line = f"#{u.rank} {u.username} ({u.realname}) | 奖项:{u.awardName} | AC:{u.ac} / 提交:{u.total} | 用时:{u.totalTime}s"
+            lines.append(line)
+        await self.api.send_group_text(event.group_id, '\n'.join(lines))

@@ -9,11 +9,13 @@ from ncatbot.utils import get_log
 
 _logger = get_log()
 
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36 QIHU 360SE',
-    'Content-Type': 'application/json',
-}
-
+headers={
+        "Content-Type": "application/json",
+        "Host": "scpc.fun",
+        "Origin": "http://scpc.fun",
+        "Referer": "http://scpc.fun/home",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
+    },
 def fetch_json(url: str, timeout: int = 10) -> Optional[Dict[str, Any]]:
     """以统一 headers 发起 GET 请求并解析 JSON。失败返回 None。"""
     try:
