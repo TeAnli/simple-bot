@@ -201,6 +201,52 @@ def get_scpc_contests(current_page: int = 0, limit: int = 10) -> Optional[List[S
             continue
     return items
 
+def get_scpc_recent_contests() -> Optional[List[ScpcContest]]:
+    json_data = fetch_json(scpc_recent_contest())
+    if not json_data:
+        return None
+    records = json_data.get('data') or []
+    contest_list: List[ScpcContest] = []
+    for record in records:
+        try:
+            name = str(record.get('title') or '未命名比赛')
+            start_time = record.get('startTime')
+            end_time = record.get('endTime')
+            duration_secs = int(record.get('duration') or 0)
+            contest_list.append(ScpcContest(name=name, startTime=start_time, endTime=end_time, duration=duration_secs))
+        except Exception:
+            continue
+    return contest_list
+
+@dataclass
+class ScpcUpdatedProblem:
+    id: int
+    problemId: str
+    title: str
+    type: int
+    gmtCreate: int
+    gmtModified: int
+
+def get_scpc_recent_updated_problems() -> Optional[List[ScpcUpdatedProblem]]:
+    body = fetch_json(scpc_recent_updated_problem())
+    print(body)
+    if not body:
+        return None
+    raw = body.get('data') or []
+    items: List[ScpcUpdatedProblem] = []
+    for r in raw:
+        try:
+            rid = int(r.get('id', 0))
+            pid = str(r.get('problemId', '') or '')
+            title = str(r.get('title', '') or '')
+            typ = int(r.get('type', 0))
+            created = parse_scpc_time(r.get('gmtCreate'))
+            modified = parse_scpc_time(r.get('gmtModified'))
+            items.append(ScpcUpdatedProblem(id=rid, problemId=pid, title=title, type=typ, gmtCreate=created, gmtModified=modified))
+        except Exception:
+            continue
+    return items
+
 def extract_scpc_timing(record: ScpcContest, now_ts: int):
     """
     根据 SCPC 比赛记录计算展示所需的时间信息。
