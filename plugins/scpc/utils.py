@@ -11,9 +11,6 @@ _logger = get_log()
 
 headers={
         "Content-Type": "application/json",
-        "Host": "scpc.fun",
-        "Origin": "http://scpc.fun",
-        "Referer": "http://scpc.fun/home",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
 }
 def fetch_json(url: str, timeout: int = 10) -> Optional[Dict[str, Any]]:
@@ -106,6 +103,17 @@ def format_contest_text(name: str,
         f"比赛时长: {duration_hours} 小时"
     )
 
+
+def format_rank_text(username: str,
+                     avatar: str,
+                     titlename: str,
+                     titleColor: str,
+                     ac: int) -> str:
+    return (
+        f"用户: {username}\n"
+        f"头衔: {titlename}\n"
+        f"AC: {ac}"
+    )
 
 def parse_scpc_time(value) -> int:
     """

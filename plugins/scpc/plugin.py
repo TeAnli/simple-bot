@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from ncatbot.core import GroupMessageEvent, Text
+from ncatbot.core import GroupMessageEvent
 from ncatbot.plugin_system import NcatBotPlugin, group_admin_filter, group_filter
 from ncatbot.plugin_system import command_registry
 from ncatbot.utils import get_log
@@ -20,12 +20,14 @@ from .scpc import (
     get_scpc_contest_rank,
     get_scpc_recent_contests,
     get_scpc_recent_updated_problems,
+    get_scpc_rank as fetch_scpc_week_rank,
 )
 from .utils import ( 
     calculate_accept_ratio,
     format_contest_text,
     broadcast_text,
     format_timestamp,
+    format_rank_text,
 )
 
 LOG = get_log()
@@ -35,7 +37,7 @@ DEFAULT_SCPC_PASSWORD = "123456"
 
 class SCPCPlugin(NcatBotPlugin):
     name = 'SCPC'
-    version = '0.0.1'
+    version = '0.0.2'
     author = 'TeAnli'
     description = '专为西南科技大学 SCPC 团队 打造的 ncatbot 机器人插件'
 
@@ -57,6 +59,7 @@ class SCPCPlugin(NcatBotPlugin):
             LOG.warning(f'注册定时任务失败: {e}')
     
     async def _listen_task(self):
+        """定时任务检查 CF 比赛并在开始前限定时间内提醒"""
         LOG.info(f'检测群组和比赛任务 订阅比赛提醒的群组: {self.group_listeners}')
         if not any(self.group_listeners.values()):
             LOG.info('CF 比赛监听已禁用或未配置群组.')
@@ -255,13 +258,13 @@ class SCPCPlugin(NcatBotPlugin):
             await self.api.send_group_text(event.group_id, '近期暂无即将开始或进行中的 SCPC 比赛')
     @command_registry.command("scpc排行", description='获取SCPC最近一周过题排行')
     @group_filter
-    async def get_scpc_rank(self, event: GroupMessageEvent):
-        records = get_scpc_rank()
+    async def get_scpc_week_rank_command(self, event: GroupMessageEvent):
+        records = fetch_scpc_week_rank()
         if records is None:
             LOG.warning('获取 SCPC 排行失败：无数据')
             await self.api.send_group_text(event.group_id, '暂时无法获取 SCPC 排行信息, 请稍后重试')
             return
-        collected = []
+        lines = []
         for record in records:
             text = format_rank_text(
                 username=record.username,
@@ -270,9 +273,9 @@ class SCPCPlugin(NcatBotPlugin):
                 titleColor=record.titleColor,
                 ac=record.ac,
             )
-            collected.append(text)
-        if collected:
-            await self.api.send_group_text(event.group_id, '\n\n'.join(collected))
+            lines.append(text)
+        if lines:
+            await self.api.send_group_text(event.group_id, '\n\n'.join(lines))
         else:
             await self.api.send_group_text(event.group_id, '暂时无法获取 SCPC 排行信息, 请稍后重试')
 
