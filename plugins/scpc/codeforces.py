@@ -26,50 +26,50 @@ class CodeforcesUserRatingChange:
     ratingUpdateTimeSeconds: int
 
 def extract_cf_timing(contest: CodeforcesContest):
-    rel = int(contest.relativeTimeSeconds or 0)
-    duration = int(contest.durationSeconds or 0)
+    relative_secs = int(contest.relativeTimeSeconds or 0)
+    duration_secs = int(contest.durationSeconds or 0)
     start_ts = int(contest.startTimeSeconds or 0)
-    if rel < 0:
-        return '即将开始', '据开始还剩', abs(rel), duration, start_ts
-    if 0 <= rel < duration:
-        return '进行中', '距离结束', max(duration - rel, 0), duration, start_ts
+    if relative_secs < 0:
+        return '即将开始', '据开始还剩', abs(relative_secs), duration_secs, start_ts
+    if 0 <= relative_secs < duration_secs:
+        return '进行中', '距离结束', max(duration_secs - relative_secs, 0), duration_secs, start_ts
     return None
 
 
 def get_codeforces_contests(include_gym: bool = False, timeout: int = 10) -> Optional[List[CodeforcesContest]]:
-    body = fetch_json(codeforces_contests_url(include_gym), timeout=timeout)
-    if not body or body.get('status') != 'OK':
+    json_data = fetch_json(codeforces_contests_url(include_gym), timeout=timeout)
+    if not json_data or json_data.get('status') != 'OK':
         return None
-    raw = body.get('result', [])
-    items: List[CodeforcesContest] = []
-    for c in raw:
+    records = json_data.get('result', [])
+    contests: List[CodeforcesContest] = []
+    for entry in records:
         try:
-            items.append(CodeforcesContest(
-                id=int(c.get('id', 0)),
-                name=str(c.get('name', '')),
-                durationSeconds=int(c.get('durationSeconds', 0)),
-                startTimeSeconds=int(c.get('startTimeSeconds', 0)),
-                relativeTimeSeconds=int(c.get('relativeTimeSeconds', 0)),
+            contests.append(CodeforcesContest(
+                id=int(entry.get('id', 0)),
+                name=str(entry.get('name', '')),
+                durationSeconds=int(entry.get('durationSeconds', 0)),
+                startTimeSeconds=int(entry.get('startTimeSeconds', 0)),
+                relativeTimeSeconds=int(entry.get('relativeTimeSeconds', 0)),
             ))
         except Exception:
             continue
-    return items
+    return contests
 
 def get_codeforces_user_rating(handle: str, timeout: int = 10) -> Optional[List[CodeforcesUserRatingChange]]:
-    body = fetch_json(codeforces_user_rating_url(handle), timeout=timeout)
-    if not body or body.get('status') != 'OK':
+    json_data = fetch_json(codeforces_user_rating_url(handle), timeout=timeout)
+    if not json_data or json_data.get('status') != 'OK':
         return None
-    raw = body.get('result', [])
+    records = json_data.get('result', [])
     changes: List[CodeforcesUserRatingChange] = []
-    for r in raw:
+    for entry in records:
         try:
             changes.append(CodeforcesUserRatingChange(
-                contestId=int(r.get('contestId', 0)),
-                contestName=str(r.get('contestName', '')),
-                handle=str(r.get('handle', handle)),
-                newRating=int(r.get('newRating', 0)),
-                oldRating=int(r.get('oldRating', 0)),
-                ratingUpdateTimeSeconds=int(r.get('ratingUpdateTimeSeconds', 0)),
+                contestId=int(entry.get('contestId', 0)),
+                contestName=str(entry.get('contestName', '')),
+                handle=str(entry.get('handle', handle)),
+                newRating=int(entry.get('newRating', 0)),
+                oldRating=int(entry.get('oldRating', 0)),
+                ratingUpdateTimeSeconds=int(entry.get('ratingUpdateTimeSeconds', 0)),
             ))
         except Exception:
             continue
