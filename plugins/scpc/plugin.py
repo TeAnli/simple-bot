@@ -29,6 +29,9 @@ from .utils import (
     format_timestamp,
     format_rank_text,
 )
+from .nowcoder import (
+    get_nowcoder_recent_contests,
+)
 
 LOG = get_log()
 
@@ -353,6 +356,19 @@ class SCPCPlugin(NcatBotPlugin):
             time_str = format_timestamp(p.gmtModified) if isinstance(p.gmtModified, int) and p.gmtModified > 0 else str(p.gmtModified)
             lines.append(f"题目: {p.title} (ID: {p.problemId}) | 更新时间: {time_str}")
         await self.api.send_group_text(event.group_id, '\n'.join(lines))
+
+    @command_registry.command('牛客近期比赛', description='获取牛客近期比赛信息')
+    @group_filter
+    async def get_nowcoder_recent_contests_command(self, event: GroupMessageEvent):
+        contests = get_nowcoder_recent_contests()
+        if not contests:
+            await self.api.send_group_text(event.group_id, '暂时无法获取牛客近期比赛信息, 请稍后重试')
+            return
+        collected = []
+        for contest in contests:
+            text = f"{contest.name} (ID: {contest.id}) \n 比赛URL: {contest.contest_url} \n 持续时间: {contest.duration}"
+            collected.append(text)
+        await self.api.send_group_text(event.group_id, "\n".join(collected))
 
     @command_registry.command('scpc比赛排行', description='获取指定比赛的过题排行，参数: 比赛ID [limit] [page]')
     @group_filter
