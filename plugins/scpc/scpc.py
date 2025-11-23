@@ -5,33 +5,43 @@ from .utils import parse_scpc_time
 
 import requests
 
+
 def scpc_user_info_url(username: str) -> str:
     """SCPC 用户主页信息 API"""
-    return f'http://scpc.fun/api/get-user-home-info?username={username}'
+    return f"http://scpc.fun/api/get-user-home-info?username={username}"
+
 
 def scpc_contests_url(current_page: int = 0, limit: int = 10) -> str:
     """SCPC 比赛列表 API"""
-    return f'http://scpc.fun/api/get-contest-list?currentPage={current_page}&limit={limit}'
+    return (
+        f"http://scpc.fun/api/get-contest-list?currentPage={current_page}&limit={limit}"
+    )
+
 
 def scpc_recent_contest() -> str:
     """SCPC 近期比赛 API"""
-    return f'http://scpc.fun/api/get-recent-contest'
+    return f"http://scpc.fun/api/get-recent-contest"
+
 
 def scpc_recent_updated_problem():
     """SCPC 近期更新题目 API"""
-    return f'http://scpc.fun/api/get-recent-updated-problem'
+    return f"http://scpc.fun/api/get-recent-updated-problem"
+
 
 def scpc_recent_ac_rank():
     """SCPC 最近一周过题排行 API"""
-    return f'http://scpc.fun/api/get-recent-seven-ac-rank'
+    return f"http://scpc.fun/api/get-recent-seven-ac-rank"
+
 
 def scpc_contest_rank_url(contest_id: int) -> str:
     """SCPC 比赛过题排行 API"""
-    return f'http://scpc.fun/api/get-contest-rank?contestId={contest_id}'
+    return f"http://scpc.fun/api/get-contest-rank?contestId={contest_id}"
+
 
 def scpc_login_url() -> str:
     """SCPC 登录 API"""
-    return f'http://scpc.fun/api/login'
+    return f"http://scpc.fun/api/login"
+
 
 @dataclass
 class ScpcUser:
@@ -40,20 +50,25 @@ class ScpcUser:
     nickname: str
     signature: str
 
+
 @dataclass
 class ScpcContest:
     name: str
     startTime: Any
     endTime: Any
     duration: int
+    contest_id: int
+    url: str
+
 
 @dataclass
 class ScpcWeekACUser:
     username: str
     avatar: str
     title_name: str
-    title_color: str # 16进制RGB
+    title_color: str  # 16进制RGB
     ac: int
+
 
 @dataclass
 class ScpcContestRankUser:
@@ -66,7 +81,8 @@ class ScpcContestRankUser:
     avatar: str
     total: int
     ac: int
-    total_time: int   
+    total_time: int
+
 
 @dataclass
 class ScpcUpdatedProblem:
@@ -76,8 +92,9 @@ class ScpcUpdatedProblem:
     type: int
     gmt_create: int
     gmt_modified: int
+    url: str
 
-    
+
 def scpc_login(username: str, password: str) -> Optional[str]:
     response = requests.post(
         scpc_login_url(),
@@ -96,6 +113,7 @@ def scpc_login(username: str, password: str) -> Optional[str]:
     if getattr(response, "status_code", 0) != 200:
         return None
     return response.headers.get("Authorization")
+
 
 def get_scpc_contest_rank(
     contest_id: int,
@@ -131,11 +149,7 @@ def get_scpc_contest_rank(
         json_data = response.json()
     except Exception:
         return None
-    records = (
-        json_data.get("data", {}).get("records")
-        or json_data.get("records")
-        or []
-    )
+    records = json_data.get("data", {}).get("records") or json_data.get("records") or []
     rank_users: List[ScpcContestRankUser] = []
     for record in records:
         try:
@@ -157,100 +171,146 @@ def get_scpc_contest_rank(
             continue
     return rank_users
 
+
 def get_scpc_rank() -> Optional[List[ScpcWeekACUser]]:
     """获取 SCPC 最近一周过题排行"""
     json_data = fetch_json(scpc_recent_ac_rank())
-    if not json_data or 'data' not in json_data:
+    if not json_data or "data" not in json_data:
         return None
-    records = json_data.get('data') or []
+    records = json_data.get("data") or []
     users: List[ScpcWeekACUser] = []
     for entry in records:
         try:
-            username = entry.get('username') or ''
-            avatar = entry.get('avatar') or ''
-            title_name = entry.get('titlename') or ''
-            title_color = entry.get('titleColor') or ''
-            ac = int(entry.get('ac', 0))
-            users.append(ScpcWeekACUser(
-                username=username, 
-                avatar=avatar, 
-                title_name=title_name,
-                title_color=title_color, 
-                ac=ac))
+            username = entry.get("username") or ""
+            avatar = entry.get("avatar") or ""
+            title_name = entry.get("titlename") or ""
+            title_color = entry.get("titleColor") or ""
+            ac = int(entry.get("ac", 0))
+            users.append(
+                ScpcWeekACUser(
+                    username=username,
+                    avatar=avatar,
+                    title_name=title_name,
+                    title_color=title_color,
+                    ac=ac,
+                )
+            )
         except Exception:
             continue
     return users
 
+
 def get_scpc_user_info(username: str) -> Optional[ScpcUser]:
     """获取 SCPC 用户主页信息"""
     json_data = fetch_json(scpc_user_info_url(username))
-    if not json_data or 'data' not in json_data:
+    if not json_data or "data" not in json_data:
         return None
-    data_obj = json_data.get('data') or {}
-    total = int(data_obj.get('total', 0))
-    solved = data_obj.get('solvedList') or []
-    nickname = str(data_obj.get('nickname') or username)
-    signature = str(data_obj.get('signature') or '')
-    return ScpcUser(total=total, solvedList=solved, nickname=nickname, signature=signature)
+    data_obj = json_data.get("data") or {}
+    total = int(data_obj.get("total", 0))
+    solved = data_obj.get("solvedList") or []
+    nickname = str(data_obj.get("nickname") or username)
+    signature = str(data_obj.get("signature") or "")
+    return ScpcUser(
+        total=total, solvedList=solved, nickname=nickname, signature=signature
+    )
 
-def get_scpc_contests(current_page: int = 0, limit: int = 10) -> Optional[List[ScpcContest]]:
+
+def get_scpc_contests(
+    current_page: int = 0, limit: int = 10
+) -> Optional[List[ScpcContest]]:
     """获取 SCPC 比赛列表"""
     json_data = fetch_json(scpc_contests_url(current_page, limit))
     if not json_data:
         return None
-    records = (
-        json_data.get('data', {}).get('records')
-        or json_data.get('records')
-        or []
-    )
+    records = json_data.get("data", {}).get("records") or json_data.get("records") or []
     contests: List[ScpcContest] = []
     for record in records:
         try:
-            name = record.get('title') or record.get('contestName') or '未命名比赛'
-            start_time = record.get('startTime')
-            end_time = record.get('endTime')
-            duration_secs = int(record.get('duration') or 0)
-            contests.append(ScpcContest(name=str(name), startTime=start_time, endTime=end_time, duration=duration_secs))
+            name = record.get("title") or record.get("contestName") or "未命名比赛"
+            start_time = record.get("startTime")
+            end_time = record.get("endTime")
+            duration_secs = int(record.get("duration") or 0)
+            cid = int(
+                record.get("id") or record.get("contestId") or record.get("cid") or 0
+            )
+            url = f"http://scpc.fun/contest/{cid}" if cid else "http://scpc.fun/contest"
+            contests.append(
+                ScpcContest(
+                    name=str(name),
+                    startTime=start_time,
+                    endTime=end_time,
+                    duration=duration_secs,
+                    contest_id=cid,
+                    url=url,
+                )
+            )
         except Exception:
             continue
     return contests
+
 
 def get_scpc_recent_contests() -> Optional[List[ScpcContest]]:
     json_data = fetch_json(scpc_recent_contest())
     if not json_data:
         return None
-    records = json_data.get('data') or []
+    records = json_data.get("data") or []
     contest_list: List[ScpcContest] = []
     for record in records:
         try:
-            name = str(record.get('title') or '未命名比赛')
-            start_time = record.get('startTime')
-            end_time = record.get('endTime')
-            duration_secs = int(record.get('duration') or 0)
-            contest_list.append(ScpcContest(name=name, startTime=start_time, endTime=end_time, duration=duration_secs))
+            name = str(record.get("title") or "未命名比赛")
+            start_time = record.get("startTime")
+            end_time = record.get("endTime")
+            duration_secs = int(record.get("duration") or 0)
+            cid = int(
+                record.get("id") or record.get("contestId") or record.get("cid") or 0
+            )
+            url = f"http://scpc.fun/contest/{cid}" if cid else "http://scpc.fun/contest"
+            contest_list.append(
+                ScpcContest(
+                    name=name,
+                    startTime=start_time,
+                    endTime=end_time,
+                    duration=duration_secs,
+                    contest_id=cid,
+                    url=url,
+                )
+            )
         except Exception:
             continue
     return contest_list
+
 
 def get_scpc_recent_updated_problems() -> Optional[List[ScpcUpdatedProblem]]:
     body = fetch_json(scpc_recent_updated_problem())
     print(body)
     if not body:
         return None
-    raw = body.get('data') or []
+    raw = body.get("data") or []
     items: List[ScpcUpdatedProblem] = []
     for r in raw:
         try:
-            rid = int(r.get('id', 0))
-            pid = str(r.get('problemId', '') or '')
-            title = str(r.get('title', '') or '')
-            typ = int(r.get('type', 0))
-            created = parse_scpc_time(r.get('gmtCreate'))
-            modified = parse_scpc_time(r.get('gmtModified'))
-            items.append(ScpcUpdatedProblem(id=rid, problem_id=pid, title=title, type=typ, gmt_create=created, gmt_modified=modified))
+            rid = int(r.get("id", 0))
+            pid = str(r.get("problemId", "") or "")
+            title = str(r.get("title", "") or "")
+            typ = int(r.get("type", 0))
+            created = parse_scpc_time(r.get("gmtCreate"))
+            modified = parse_scpc_time(r.get("gmtModified"))
+            url = f"http://scpc.fun/problem/{pid}" if pid else "http://scpc.fun/problem"
+            items.append(
+                ScpcUpdatedProblem(
+                    id=rid,
+                    problem_id=pid,
+                    title=title,
+                    type=typ,
+                    gmt_create=created,
+                    gmt_modified=modified,
+                    url=url,
+                )
+            )
         except Exception:
             continue
     return items
+
 
 def extract_scpc_timing(record: ScpcContest, now_ts: int):
     """
@@ -259,15 +319,17 @@ def extract_scpc_timing(record: ScpcContest, now_ts: int):
     name = record.name
     start_ts = parse_scpc_time(record.startTime)
     end_ts = parse_scpc_time(record.endTime)
-    duration = int(record.duration or (max(end_ts - start_ts, 0) if start_ts and end_ts else 0))
+    duration = int(
+        record.duration or (max(end_ts - start_ts, 0) if start_ts and end_ts else 0)
+    )
     if start_ts and now_ts < start_ts:
-        state = '即将开始'
-        remaining_label = '据开始还剩'
+        state = "即将开始"
+        remaining_label = "据开始还剩"
         remaining_secs = start_ts - now_ts
         sort_key = remaining_secs
     elif start_ts and end_ts and start_ts <= now_ts < end_ts:
-        state = '进行中'
-        remaining_label = '距离结束'
+        state = "进行中"
+        remaining_label = "距离结束"
         remaining_secs = max(end_ts - now_ts, 0)
         sort_key = remaining_secs
     else:
