@@ -1,11 +1,9 @@
 from datetime import datetime
 import math
-from functools import wraps
-from typing import Callable, Optional, Dict, Any
+from typing import Optional, Dict, Any
 import requests
-from ncatbot.plugin_system import NcatBotPlugin
-from ncatbot.core.event import BaseMessageEvent
 from ncatbot.utils import get_log
+from dataclasses import dataclass
 
 _logger = get_log()
 
@@ -15,8 +13,26 @@ headers = {
 }
 
 
+@dataclass
+class Contest:
+    name: str
+    contest_id: int | None
+    start_ts: int
+    duration_secs: int
+    url: str | None
+
+
 def fetch_json(url: str, timeout: int = 10) -> Optional[Dict[str, Any]]:
-    """以统一 headers 发起 GET 请求并解析 JSON。失败返回 None。"""
+    """
+    使用统一请求头发起 GET 请求并解析 JSON 响应
+
+    Args:
+    - url: 请求地址
+    - timeout: 超时时间 (秒)
+
+    Returns:
+    - 解析后的 JSON 字典; 失败返回 None
+    """
     try:
         resp = requests.get(url, headers=headers, timeout=timeout)
     except Exception as e:
@@ -35,23 +51,49 @@ def fetch_json(url: str, timeout: int = 10) -> Optional[Dict[str, Any]]:
 
 
 def format_timestamp(timestamp: int, format: str = "%Y-%m-%d %H:%M") -> str:
-    """将timestamp数字格式化"""
+    """
+    将时间戳格式化为指定的日期时间字符串
+
+    Args:
+    - timestamp: 时间戳（秒）
+    - format: 时间格式字符串
+
+    Returns:
+    - 格式化后的时间字符串
+    """
     return datetime.fromtimestamp(timestamp).strftime(format)
 
 
 def format_hours(seconds: int, precision: int = 1) -> str:
-    """将秒数转化为小时数, 并保留指定位数小数"""
+    """
+    将秒数转换为小时数，保留指定小数位
+
+    Args:
+    - seconds: 秒数
+    - precision: 小数位数
+
+    Returns:
+    - 小时数字符串
+    """
     hours = seconds / 3600
     return f"{hours:.{precision}f}"
 
 
 def format_relative_hours(seconds: int, precision: int = 1) -> str:
     """
-    格式化相距时间
+    将秒数格式化为相对时间描述：小时/天/周
+
     规则:
-        1. 相聚时间 < 1天, 以小时数返回
-        2. 相聚时间 < 7天, 以天数返回
-        3. 相聚时间 < 1年, 以周数返回
+    - < 1 天：返回小时数
+    - < 7 天：返回天数
+    - 其他：返回周数
+
+    参数:
+    - seconds: 秒数
+    - precision: 小数位数（用于小时）
+
+    返回:
+    - 相对时间字符串
     """
     hours = seconds / 3600
     if hours >= 24 * 7:
@@ -65,7 +107,13 @@ def format_relative_hours(seconds: int, precision: int = 1) -> str:
 
 def state_icon(state: str) -> str:
     """
-    比赛状态图标和文字信息
+    根据比赛状态返回对应图标
+
+    Args:
+    - state: 比赛状态（即将开始/进行中/已结束）
+
+    Returns:
+    - 对应状态的图标字符串
     """
     mapping = {
         "即将开始": "⏳",
@@ -87,16 +135,22 @@ def format_contest_text(
     contest_url: str | None = None,
 ) -> str:
     """
-    对洛谷,scpc,codeforces使用相同的格式化比赛信息输出
+    概述:
+    统一格式化各平台的比赛信息为展示文本
+
     参数:
-        - name: 比赛名称
-        - contest_id: 比赛ID
-        - state: '即将开始' | '进行中' | '已结束'
-        - start_ts: 开始时间的timestamp
-        - remaining_label: 距离比赛开始的标题
-        - remaining_secs: 距离比赛开始的时间
-        - duration_secs: 比赛持续时间
-        - include_id: 是否要在比赛名称处加入id显示
+    - name: 比赛名称
+    - contest_id: 比赛 ID（可为 None）
+    - state: 比赛状态（即将开始/进行中/已结束）
+    - start_ts: 开始时间戳（秒）
+    - remaining_label: 剩余时间标签文案
+    - remaining_secs: 剩余时间（秒）
+    - duration_secs: 比赛持续时间（秒）
+    - include_id: 是否在标题行中包含比赛 ID
+    - contest_url: 比赛链接（可选）
+
+    返回:
+    - 格式化后的比赛信息多行文本
     """
     icon = state_icon(state)
     start_time_str = format_timestamp(start_ts)
@@ -122,14 +176,33 @@ def format_contest_text(
 
 
 def format_rank_text(
-    username: str, avatar: str, titlename: str, titleColor: str, ac: int
+    username: str, avatar: str, title_name: str, title_color: str, ac: int
 ) -> str:
-    return f"用户: {username}\n" f"头衔: {titlename}\n" f"AC: {ac}"
+    """
+    将排行榜用户信息格式化为展示文本
+
+    Args:
+    - username: 用户名
+    - avatar: 头像 URL（当前未展示）
+    - title_name: 头衔名称
+    - title_color: 头衔颜色（当前未展示）
+    - ac: 通过题目数量
+
+    Returns:
+    - 格式化后的多行文本
+    """
+    return f"用户: {username}\n" f"头衔: {title_name}\n" f"AC: {ac}"
 
 
 def parse_scpc_time(value) -> int:
     """
-    解析JAVA未经格式化的Date内容
+    解析来自后端GMT未经格式化的时间字段为时间戳
+
+    Args:
+    - value: 原始时间值（可能是秒 数字ISO 字符串等）
+
+    Returns:
+    - 解析得到的时间戳（秒）无法解析返回 0
     """
     if value is None:
         return 0
@@ -154,54 +227,70 @@ def parse_scpc_time(value) -> int:
 
 
 def calculate_accept_ratio(total_count: int, accept_count: int) -> float:
-    """计算通过率 accept/total。total 为 0 时返回 0.0。"""
+    """
+    计算比率
+
+    Args:
+    - total_count: 总提交数
+    - accept_count: 通过数
+
+    Returns:
+    - 通过率（浮点数）当 `total_count` 为 0 返回 0.0
+    """
     if total_count == 0:
         return 0.0
     return accept_count / total_count
 
 
-async def send_group_messages(api_client, group_id: int, messages: list[dict]):
-    """发送原始消息数组到指定群聊，统一异常处理。"""
-    try:
-        await api_client.send_group_msg(group_id, messages)
-    except Exception as e:
-        _logger.warning(f"发送群消息失败: {e}")
-
-
 async def broadcast_text(api_client, group_listeners: dict, text: str):
-    """向开启监听的群聊广播文本消息。"""
+    """
+    向已开启监听的群聊广播文本消息
+
+    Args:
+    - api_client: 机器人 API 客户端
+    - group_listeners: 群组监听开关映射（group_id -> enabled）
+    - text: 要广播的文本内容
+    """
     for gid, enabled in group_listeners.items():
         if enabled:
             await api_client.send_group_text(gid, text)
 
 
-def require_sender_admin():
+def extract_contest_timing(contest: Contest, now_ts: int):
     """
-    用于群聊命令的权限过滤装饰器：仅允许群管理员/群主使用被装饰的命令。
+    根据统一 Contest 对象计算比赛状态与剩余时间。
+
+    Args:
+    - contest: 统一比赛对象。
+    - now_ts: 当前时间戳（秒）。
+
+    Returns:
+    - (state, remaining_label, remaining_secs, duration_secs, start_ts, sort_key)
+    - 比赛已结束返回 None。
     """
-
-    def decorator(func: Callable):
-        @wraps(func)
-        async def wrapper(
-            self: NcatBotPlugin, event: BaseMessageEvent, *args, **kwargs
-        ):
-            group_id = getattr(event, "group_id", None)
-            user_id = getattr(event, "user_id", None)
-            if group_id is None or user_id is None:
-                return await func(self, event, *args, **kwargs)
-            try:
-                member_info = await self.api.get_group_member_info(
-                    group_id=group_id,
-                    user_id=user_id,
-                )
-                if member_info.role == "owner" or member_info.role == "admin":
-                    return await func(self, event, *args, **kwargs)
-                return await event.reply("您不是群管理员或群主，无法执行此命令。")
-            except Exception as e:
-                _logger.warning(f"获取发送者群角色失败: {e}")
-                await event.reply("无法获取您的群成员信息，暂时无法执行该命令。")
-                return
-
-        return wrapper
-
-    return decorator
+    start_ts = int(contest.start_ts or 0)
+    duration = int(contest.duration_secs or 0)
+    if start_ts <= 0 or duration <= 0:
+        return None
+    end_ts = start_ts + duration
+    if now_ts < start_ts:
+        remaining = start_ts - now_ts
+        return (
+            "即将开始",
+            "据开始还剩",
+            remaining,
+            duration,
+            start_ts,
+            remaining,
+        )
+    if start_ts <= now_ts < end_ts:
+        remaining = end_ts - now_ts
+        return (
+            "进行中",
+            "距离结束",
+            remaining,
+            duration,
+            start_ts,
+            remaining,
+        )
+    return None

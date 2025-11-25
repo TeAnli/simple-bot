@@ -1,71 +1,71 @@
 from typing import Optional, List
 from dataclasses import dataclass
-from .utils import fetch_json
+import requests
+from ..utils import fetch_json, Contest
 
 
 def codeforces_contests_url(include_gym: bool = False) -> str:
+    """
+    返回 Codeforces 比赛列表 API 的 URL
+
+    Args:
+    - include_gym: 是否包含 Gym 比赛，默认 False
+
+    Returns:
+    - 完整的查询 URL 字符串
+    """
     return f"https://codeforces.com/api/contest.list?gym={str(include_gym).lower()}"
 
 
 def codeforces_user_rating_url(username: str) -> str:
+    """
+    返回指定用户的 rating 变更记录 API 的 URL
+
+    Args:
+    - username: Codeforces 用户名（handle）
+
+    Returns:
+    - 完整的查询 URL 字符串
+    """
     return f"https://codeforces.com/api/user.rating?handle={username}"
 
 
 @dataclass
-class CodeforcesContest:
-    id: int
-    name: str
-    duration_seconds: int
-    start_time_seconds: int
-    relative_time_seconds: int
-    url: str
-
-
-@dataclass
 class CodeforcesUserRatingChange:
-    contest_id: int
-    contest_name: str
-    handle: str
-    new_rating: int
-    old_rating: int
-    rating_update_time_seconds: int
-
-
-def extract_cf_timing(contest: CodeforcesContest):
-    relative_secs = int(contest.relative_time_seconds or 0)
-    duration_secs = int(contest.duration_seconds or 0)
-    start_ts = int(contest.start_time_seconds or 0)
-    if relative_secs < 0:
-        return "即将开始", "据开始还剩", abs(relative_secs), duration_secs, start_ts
-    if 0 <= relative_secs < duration_secs:
-        return (
-            "进行中",
-            "距离结束",
-            max(duration_secs - relative_secs, 0),
-            duration_secs,
-            start_ts,
-        )
-    return None
+    contest_id: int  # 比赛ID
+    contest_name: str  # 比赛名称
+    handle: str  # 用户名
+    new_rating: int  # 新评分
+    old_rating: int  # 旧评分
+    rating_update_time_seconds: int  # 评分更新时间（时间戳）
 
 
 def get_codeforces_contests(
     include_gym: bool = False, timeout: int = 10
-) -> Optional[List[CodeforcesContest]]:
+) -> Optional[List[Contest]]:
     json_data = fetch_json(codeforces_contests_url(include_gym), timeout=timeout)
     if not json_data or json_data.get("status") != "OK":
-        return None
+        try:
+            resp = requests.get(codeforces_contests_url(include_gym), timeout=timeout)
+            if resp.status_code == 200:
+                json_data = resp.json()
+            else:
+                return None
+        except Exception:
+            return None
+        if not json_data or json_data.get("status") != "OK":
+            return None
     records = json_data.get("result", [])
-    contests: List[CodeforcesContest] = []
+    contests: List[Contest] = []
     for entry in records:
         try:
             cid = int(entry.get("id", 0))
             contests.append(
-                CodeforcesContest(
-                    id=cid,
+                Contest(
                     name=str(entry.get("name", "")),
-                    duration_seconds=int(entry.get("durationSeconds", 0)),
-                    start_time_seconds=int(entry.get("startTimeSeconds", 0)),
-                    relative_time_seconds=int(entry.get("relativeTimeSeconds", 0)),
+                    contest_id=cid,
+                    start_ts=int(entry.get("startTimeSeconds", 0)),
+                    duration_secs=int(entry.get("durationSeconds", 0)),
                     url=(
                         f"https://codeforces.com/contest/{cid}"
                         if cid
@@ -81,6 +81,16 @@ def get_codeforces_contests(
 def get_codeforces_user_rating(
     handle: str, timeout: int = 10
 ) -> Optional[List[CodeforcesUserRatingChange]]:
+    """
+    请求并解析用户的 Codeforces rating 变更记录
+
+    Args:
+    - handle: 用户名 (handle)
+    - timeout: 网络请求超时时间 (秒)
+
+    Returns:
+    - CodeforcesUserRatingChange 列表失败或状态不为 OK 时返回 None
+    """
     json_data = fetch_json(codeforces_user_rating_url(handle), timeout=timeout)
     if not json_data or json_data.get("status") != "OK":
         return None

@@ -1,4 +1,6 @@
 from datetime import datetime
+from dataclasses import dataclass
+from os import name
 
 from ncatbot.core import GroupMessageEvent
 from ncatbot.plugin_system import NcatBotPlugin, group_admin_filter, group_filter
@@ -7,15 +9,13 @@ from ncatbot.utils import get_log
 
 import random
 
-from .codeforces import (
+from .platforms.codeforces import (
     get_codeforces_contests,
     get_codeforces_user_rating,
-    extract_cf_timing,
 )
-from .scpc import (
+from .platforms.scpc import (
     get_scpc_user_info,
     get_scpc_contests,
-    extract_scpc_timing,
     scpc_login,
     get_scpc_contest_rank,
     get_scpc_recent_contests,
@@ -28,8 +28,10 @@ from .utils import (
     broadcast_text,
     format_timestamp,
     format_rank_text,
+    Contest,
+    extract_contest_timing,
 )
-from .nowcoder import (
+from .platforms.nowcoder import (
     get_nowcoder_recent_contests,
 )
 
@@ -37,6 +39,50 @@ LOG = get_log()
 
 DEFAULT_SCPC_USERNAME = "player281"
 DEFAULT_SCPC_PASSWORD = "123456"
+
+
+@dataclass
+class ContestWithSource:
+    source: str
+    contest: Contest
+
+
+PROVIDERS = [
+    ("cf", get_codeforces_contests),
+    ("scpc", get_scpc_contests),
+    ("nowcoder", get_nowcoder_recent_contests),
+]
+
+
+def get_aggregated_contests(
+    include_cf: bool = True,
+    include_scpc: bool = True,
+    include_nowcoder: bool = True,
+    timeout_cf: int = 10,
+    scpc_limit: int = 10,
+) -> list[ContestWithSource]:
+    now_ts = int(datetime.now().timestamp())
+    items: list[tuple[int, ContestWithSource]] = []
+    for source, fetch in PROVIDERS:
+        if source == "cf" and not include_cf:
+            continue
+        if source == "scpc" and not include_scpc:
+            continue
+        if source == "nowcoder" and not include_nowcoder:
+            continue
+        if source == "cf":
+            lst = fetch(timeout=timeout_cf) or []
+        elif source == "scpc":
+            lst = fetch(limit=scpc_limit) or []
+        else:
+            lst = fetch() or []
+        for c in lst:
+            timing = extract_contest_timing(c, now_ts)
+            if timing:
+                sort_key = timing[-1]
+                items.append((sort_key, ContestWithSource(source, c)))
+    items.sort(key=lambda x: x[0])
+    return [it[1] for it in items]
 
 
 class SCPCPlugin(NcatBotPlugin):
@@ -49,7 +95,9 @@ class SCPCPlugin(NcatBotPlugin):
     cf_alerted_ids = set[int]()
 
     async def on_load(self):
-        """注册定时任务, 每隔30min执行一次获取比赛信息"""
+        """
+        注册比赛监听的定时任务 (每 30 分钟执行一次)
+        """
         LOG.info("SCPC 插件启动中")
         try:
             self.add_scheduled_task(
@@ -62,7 +110,9 @@ class SCPCPlugin(NcatBotPlugin):
             LOG.warning(f"注册定时任务失败: {e}")
 
     async def _listen_task(self):
-        """定时任务检查 CF 比赛并在开始前限定时间内提醒"""
+        """
+        定时任务主体: 检查 CF 与 SCPC 比赛, 在开始前限定时间内提醒开启监听的群
+        """
         LOG.info(f"检测群组和比赛任务 订阅比赛提醒的群组: {self.group_listeners}")
         if not any(self.group_listeners.values()):
             LOG.info("CF 比赛监听已禁用或未配置群组.")
@@ -70,48 +120,122 @@ class SCPCPlugin(NcatBotPlugin):
         await self._check_cf_contests_and_notify(threshold_hours=2)
         await self._check_scpc_contests_and_notify(threshold_hours=2)
 
+    async def _send_upcoming_notifications(
+        self, upcoming_texts: list[tuple[int, str]], empty_log_message: str
+    ):
+        """
+        对即将开始的比赛提醒进行统一排序与广播处理
+
+        Args:
+        - upcoming_texts: 元组列表 (remaining_secs, text)
+        - empty_log_message: 当无提醒时的日志信息
+        """
+        upcoming_texts.sort(key=lambda x: x[0])
+        if not upcoming_texts:
+            LOG.info(empty_log_message)
+            return
+        merged = "\n\n".join([t for _, t in upcoming_texts])
+        await broadcast_text(self.api, self.group_listeners, merged)
+
+    def _format_single_contest(
+        self,
+        c: Contest,
+        now_ts: int,
+        include_id: bool,
+        source_label: str | None = None,
+        skip_verify_name: bool = False,
+    ) -> tuple[int, str] | None:
+        if skip_verify_name and ("验题" in c.name):
+            return None
+        timing = extract_contest_timing(c, now_ts)
+        if not timing:
+            return None
+        state, remaining_label, remaining_secs, duration_secs, start_ts, sort_key = (
+            timing
+        )
+        text = format_contest_text(
+            name=c.name,
+            contest_id=c.contest_id,
+            state=state,
+            start_ts=start_ts,
+            remaining_label=remaining_label,
+            remaining_secs=remaining_secs,
+            duration_secs=duration_secs,
+            include_id=include_id,
+            contest_url=c.url,
+        )
+        if source_label:
+            text = f"{text}\n来源: {source_label}"
+        return sort_key, text
+
+    def _build_contest_texts(
+        self,
+        contests: list[Contest],
+        include_id: bool,
+        source: str | None = None,
+        skip_verify_name: bool = False,
+    ) -> list[tuple[int, str]]:
+        now_ts = int(datetime.now().timestamp())
+        source_map = {"cf": "Codeforces", "scpc": "SCPC", "nowcoder": "牛客"}
+        label = source_map.get(source, source) if source else None
+        items: list[tuple[int, str]] = []
+        for c in contests:
+            formatted = self._format_single_contest(
+                c, now_ts, include_id, label, skip_verify_name
+            )
+            if formatted:
+                items.append(formatted)
+        items.sort(key=lambda x: x[0])
+        return items
+
     async def _check_cf_contests_and_notify(self, threshold_hours: int = 2):
-        """检查 CF 比赛并在距开始限定时间内向所有监听群提醒."""
+        """
+        检查 CF 比赛, 筛选在 `threshold_hours` 小时内即将开始的比赛, 并向监听群提醒
+
+        Args:
+        - threshold_hours: 提醒的时间阈值 (小时)
+        """
         contests = get_codeforces_contests()
         if not contests:
             LOG.warning("获取 CF 比赛失败：无数据或状态异常")
             return
         threshold_seconds = threshold_hours * 3600
         upcoming_texts = []
-        # 遍历获取到的比赛列表
-        for contest in contests:
-            # 获取比赛id, 用于后续去重, 防止重复发送
-            cid = contest.id
-            timing = extract_cf_timing(contest)
-            if timing:
-                state, remaining_label, remaining_secs, duration, start_ts = timing
-                if state == "即将开始" and remaining_secs <= threshold_seconds:
-                    if cid in self.cf_alerted_ids:
-                        continue
+        now_ts = int(datetime.now().timestamp())
+        for c in contests:
+            cid = c.contest_id
+            timing = extract_contest_timing(c, now_ts)
+            if not timing:
+                continue
+            state, remaining_label, remaining_secs, duration, start_ts, _ = timing
+            if state == "即将开始" and remaining_secs <= threshold_seconds:
+                if cid in self.cf_alerted_ids:
+                    continue
+                if cid is not None:
                     self.cf_alerted_ids.add(cid)
-
-                    text = format_contest_text(
-                        name=contest.name,
-                        contest_id=cid,
-                        state=state,
-                        start_ts=start_ts,
-                        remaining_label=remaining_label,
-                        remaining_secs=remaining_secs,
-                        duration_secs=duration,
-                        contest_url=getattr(
-                            contest, "url", f"https://codeforces.com/contest/{cid}"
-                        ),
-                    )
-                    upcoming_texts.append((remaining_secs, text))
-        upcoming_texts.sort(key=lambda x: x[0])
-        if not upcoming_texts:
-            LOG.info("限定时间内无即将开始的 CF 比赛，不发送通知")
-            return
-
-        merged = "\n\n".join([t for _, t in upcoming_texts])
-        await broadcast_text(self.api, self.group_listeners, merged)
+                text = format_contest_text(
+                    name=c.name,
+                    contest_id=c.contest_id,
+                    state=state,
+                    start_ts=start_ts,
+                    remaining_label=remaining_label,
+                    remaining_secs=remaining_secs,
+                    duration_secs=duration,
+                    contest_url=c.url,
+                )
+                upcoming_texts.append((remaining_secs, text))
+        await self._send_upcoming_notifications(
+            upcoming_texts,
+            "限定时间内无即将开始的 CF 比赛，不发送通知",
+        )
 
     async def _check_scpc_contests_and_notify(self, threshold_hours: int = 2):
+        """
+        检查 SCPC 比赛, 筛选在 `threshold_hours` 小时内即将开始的比赛, 并向监听群提醒
+
+        Args:
+        - threshold_hours: 提醒的时间阈值 (小时)
+        """
         records = get_scpc_contests()
         if not records:
             LOG.warning("获取 SCPC 比赛失败：无数据或状态异常")
@@ -119,22 +243,16 @@ class SCPCPlugin(NcatBotPlugin):
         threshold_seconds = threshold_hours * 3600
         now_ts = int(datetime.now().timestamp())
         upcoming_texts = []
-        for record in records:
-            timing = extract_scpc_timing(record, now_ts)
+        for r in records:
+            if "验题" in r.name:
+                continue
+            timing = extract_contest_timing(r, now_ts)
             if not timing:
                 continue
-            (
-                name,
-                state,
-                remaining_label,
-                remaining_secs,
-                duration,
-                start_ts,
-                sort_key,
-            ) = timing
+            state, remaining_label, remaining_secs, duration, start_ts, _ = timing
             if state == "即将开始" and remaining_secs <= threshold_seconds:
                 text = format_contest_text(
-                    name=name,
+                    name=r.name,
                     contest_id=None,
                     state=state,
                     start_ts=start_ts,
@@ -142,15 +260,13 @@ class SCPCPlugin(NcatBotPlugin):
                     remaining_secs=remaining_secs,
                     duration_secs=duration,
                     include_id=False,
-                    contest_url=getattr(record, "url", None),
+                    contest_url=r.url,
                 )
                 upcoming_texts.append((remaining_secs, text))
-        upcoming_texts.sort(key=lambda x: x[0])
-        if not upcoming_texts:
-            LOG.info("限定时间内无即将开始的 SCPC 比赛，不发送通知")
-            return
-        merged = "\n\n".join([t for _, t in upcoming_texts])
-        await broadcast_text(self.api, self.group_listeners, merged)
+        await self._send_upcoming_notifications(
+            upcoming_texts,
+            "限定时间内无即将开始的 SCPC 比赛，不发送通知",
+        )
 
     @command_registry.command("来个男神", description="随机发送一张男神照片")
     @group_admin_filter
@@ -190,7 +306,7 @@ class SCPCPlugin(NcatBotPlugin):
 
         LOG.info(f"获取 SCPC 用户信息: {data}")
         total = int(getattr(data, "total", 0))
-        solved_list = getattr(data, "solvedList", []) or []
+        solved_list = getattr(data, "solved_list", []) or []
         accept_ratio = "{:.2f}".format(
             calculate_accept_ratio(total, len(solved_list)) * 100
         )
@@ -208,44 +324,27 @@ class SCPCPlugin(NcatBotPlugin):
         await self.api.send_group_text(event.group_id, user_text)
 
     async def _get_codeforces_contests(self, group_id: str):
+        """
+        概述:
+        拉取 CF 比赛列表并格式化后发送到指定群
+
+        参数:
+        - group_id: 目标群组 ID
+        """
         contests = get_codeforces_contests()
-        if contests is not None:
-            LOG.info(f"获取 CF 比赛列表：共 {len(contests)} 场")
-
-            collected = []
-            for contest in contests:
-                timing = extract_cf_timing(contest)
-                if not timing:
-                    continue
-                state, remaining_label, time_remaining, duration, start_ts = timing
-
-                text = format_contest_text(
-                    name=contest.name,
-                    contest_id=contest.id,
-                    state=state,
-                    start_ts=start_ts,
-                    remaining_label=remaining_label,
-                    remaining_secs=int(time_remaining),
-                    duration_secs=int(duration),
-                    contest_url=getattr(
-                        contest, "url", f"https://codeforces.com/contest/{contest.id}"
-                    ),
-                )
-                collected.append((time_remaining, text))
-
-            collected.sort(key=lambda x: x[0])
-            texts = [t for _, t in collected]
-
-            if texts:
-                await self.api.send_group_text(group_id, "\n\n".join(texts))
-            else:
-                await self.api.send_group_text(
-                    group_id, "近期暂无即将开始或进行中的 Codeforces 比赛"
-                )
-        else:
+        if contests is None:
             LOG.warning("获取 CF 比赛失败：请求异常或状态不正确")
             await self.api.send_group_text(
                 group_id, "暂时无法获取 Codeforces 比赛信息, 请稍后重试"
+            )
+            return
+        LOG.info(f"获取 CF 比赛列表：共 {len(contests)} 场")
+        texts = self._build_contest_texts(contests, include_id=True, source="cf")
+        if texts:
+            await self.api.send_group_text(group_id, "\n\n".join([t for _, t in texts]))
+        else:
+            await self.api.send_group_text(
+                group_id, "近期暂无即将开始或进行中的 Codeforces 比赛"
             )
 
     @command_registry.command("scpc比赛", description="获取SCPC比赛信息")
@@ -258,40 +357,13 @@ class SCPCPlugin(NcatBotPlugin):
                 event.group_id, "暂时无法获取 SCPC 比赛信息, 请稍后重试"
             )
             return
-        collected = []
-        now_ts = int(datetime.now().timestamp())
-        for record in records:
-            timing = extract_scpc_timing(record, now_ts)
-            if not timing:
-                continue
-            (
-                name,
-                state,
-                remaining_label,
-                remaining_secs,
-                duration,
-                start_ts,
-                sort_key,
-            ) = timing
-
-            text = format_contest_text(
-                name=name,
-                contest_id=None,
-                state=state,
-                start_ts=start_ts,
-                remaining_label=remaining_label,
-                remaining_secs=remaining_secs,
-                duration_secs=duration,
-                include_id=False,
-                contest_url=getattr(record, "url", None),
-            )
-
-            collected.append((sort_key, text))
-
-        collected.sort(key=lambda x: x[0])
-        texts = [t for _, t in collected]
+        texts = self._build_contest_texts(
+            records, include_id=False, source="scpc", skip_verify_name=True
+        )
         if texts:
-            await self.api.send_group_text(event.group_id, "\n\n".join(texts))
+            await self.api.send_group_text(
+                event.group_id, "\n\n".join([t for _, t in texts])
+            )
         else:
             await self.api.send_group_text(
                 event.group_id, "近期暂无即将开始或进行中的 SCPC 比赛"
@@ -312,8 +384,8 @@ class SCPCPlugin(NcatBotPlugin):
             text = format_rank_text(
                 username=record.username,
                 avatar=record.avatar,
-                titlename=record.title_name,
-                titleColor=record.title_color,
+                title_name=record.title_name,
+                title_color=record.title_color,
                 ac=record.ac,
             )
             lines.append(text)
@@ -333,7 +405,7 @@ class SCPCPlugin(NcatBotPlugin):
 
             if not ratings:
                 await self.api.send_group_text(
-                    event.group_id, f"用户 {username} 没有比赛记录。"
+                    event.group_id, f"用户 {username} 没有比赛记录"
                 )
                 return
 
@@ -362,37 +434,11 @@ class SCPCPlugin(NcatBotPlugin):
                 event.group_id, "暂时无法获取 SCPC 近期比赛信息, 请稍后重试"
             )
             return
-        collected = []
-        now_ts = int(datetime.now().timestamp())
-        for record in records:
-            timing = extract_scpc_timing(record, now_ts)
-            if not timing:
-                continue
-            (
-                name,
-                state,
-                remaining_label,
-                remaining_secs,
-                duration,
-                start_ts,
-                sort_key,
-            ) = timing
-            text = format_contest_text(
-                name=name,
-                contest_id=None,
-                state=state,
-                start_ts=start_ts,
-                remaining_label=remaining_label,
-                remaining_secs=remaining_secs,
-                duration_secs=duration,
-                include_id=False,
-                contest_url=getattr(record, "url", None),
-            )
-            collected.append((sort_key, text))
-        collected.sort(key=lambda x: x[0])
-        texts = [t for _, t in collected]
+        texts = self._build_contest_texts(records, include_id=False, source="scpc")
         if texts:
-            await self.api.send_group_text(event.group_id, "\n\n".join(texts))
+            await self.api.send_group_text(
+                event.group_id, "\n\n".join([t for _, t in texts])
+            )
         else:
             await self.api.send_group_text(
                 event.group_id, "近期暂无即将开始或进行中的 SCPC 比赛"
@@ -430,11 +476,36 @@ class SCPCPlugin(NcatBotPlugin):
                 event.group_id, "暂时无法获取牛客近期比赛信息, 请稍后重试"
             )
             return
+        texts = self._build_contest_texts(contests, include_id=True, source="nowcoder")
+        await self.api.send_group_text(
+            event.group_id, "\n\n".join([t for _, t in texts])
+        )
+
+    @command_registry.command("近期比赛", description="统一展示CF/SCPC/牛客的近期比赛")
+    @group_filter
+    async def get_aggregated_contests_command(self, event: GroupMessageEvent):
+        items = get_aggregated_contests(
+            include_cf=True, include_scpc=True, include_nowcoder=True
+        )
+        if not items:
+            await self.api.send_group_text(
+                event.group_id, "近期暂无即将开始或进行中的比赛"
+            )
+            return
         collected = []
-        for contest in contests:
-            text = f"{contest.name} (ID: {contest.id}) \n 比赛URL: {contest.contest_url} \n 持续时间: {contest.duration}"
-            collected.append(text)
-        await self.api.send_group_text(event.group_id, "\n".join(collected))
+        for item in items:
+            formatted = self._build_contest_texts(
+                [item.contest],
+                include_id=True,
+                source=item.source,
+                skip_verify_name=(item.source == "scpc"),
+            )
+            if formatted:
+                collected.extend(formatted)
+        collected.sort(key=lambda x: x[0])
+        await self.api.send_group_text(
+            event.group_id, "\n\n".join([t for _, t in collected])
+        )
 
     @command_registry.command(
         "scpc比赛排行",
