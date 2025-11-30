@@ -519,7 +519,28 @@ class SCPCPlugin(NcatBotPlugin):
         await self.api.send_group_text(
             event.group_id, "\n\n".join([t for _, t in collected])
         )
+    @command_registry.command("洛谷比赛", description="获取洛谷比赛信息")
+    @group_filter
+    async def get_luogu_contests(self, event: GroupMessageEvent):
+        from .platforms.luogu import get_luogu_contest
 
+        contests = get_luogu_contest()
+        if contests is None:
+            LOG.warning("获取 洛谷 比赛失败：无数据")
+            await self.api.send_group_text(
+                event.group_id, "暂时无法获取 洛谷 比赛信息, 请稍后重试"
+            )
+            return
+        texts = self._build_contest_texts(contests, include_id=True, source="luogu")
+        if texts:
+            await self.api.send_group_text(
+                event.group_id, "\n\n".join([t for _, t in texts])
+            )
+        else:
+            await self.api.send_group_text(
+                event.group_id, "近期暂无即将开始或进行中的 洛谷 比赛"
+            )
+    
     @command_registry.command(
         "生成比赛排行", description="生成指定比赛的排行榜Excel表格"
     )
