@@ -1,67 +1,22 @@
 from datetime import datetime
-from typing import Optional, Dict, Any
-from ncatbot.utils import get_log
-from dataclasses import dataclass
 
 import math
-import requests
 
-LOG = get_log()
-
-headers = {
-    "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
-}
+from plugins.scpc.platforms.platform import Contest
 
 
-@dataclass
-class Contest:
-    name: str  # 比赛名称
-    start_ts: int  # 开始时间戳（秒）
-    url: str | None  # 比赛链接
-    duration_secs: int  # 持续时间（秒）
-    contest_id: int | None  # 比赛ID
-
-
-def fetch_json(url: str, headers: dict = headers) -> Optional[Dict[str, Any]]:
-    """
-    使用统一请求头发起 GET 请求并解析 JSON 响应
-
-    Args:
-    - url: 请求地址
-
-    Returns:
-    - 解析后的 JSON 字典; 失败返回 None
-    """
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-    except Exception as e:
-        LOG.warning(f"HTTP 请求失败: {e}")
-        return None
-    if response.status_code != 200:
-        LOG.warning(
-            f"请求 {url} 返回状态码异常: {response.status_code} {response.text}"
-        )
-        return None
-    try:
-        return response.json()
-    except Exception as e:
-        LOG.warning(f"JSON 解析失败: {e}")
-        return None
-
-
-def format_timestamp(timestamp: int, format: str = "%Y-%m-%d %H:%M") -> str:
+def format_timestamp(timestamp: int, formatter: str = "%Y-%m-%d %H:%M") -> str:
     """
     将时间戳格式化为指定的日期时间字符串
 
     Args:
-    - timestamp: 时间戳（秒）
-    - format: 时间格式字符串
+        timestamp: 时间戳（秒）
+        formatter: 时间格式字符串
 
     Returns:
-    - 格式化后的时间字符串
+        格式化后的时间字符串
     """
-    return datetime.fromtimestamp(timestamp).strftime(format)
+    return datetime.fromtimestamp(timestamp).strftime(formatter)
 
 
 def format_hours(seconds: int, precision: int = 1) -> str:
@@ -69,11 +24,11 @@ def format_hours(seconds: int, precision: int = 1) -> str:
     将秒数转换为小时数，保留指定小数位
 
     Args:
-    - seconds: 秒数
-    - precision: 小数位数
+        seconds: 秒数
+        precision: 小数位数
 
     Returns:
-    - 小时数字符串
+        小时数字符串
     """
     hours = seconds / 3600
     return f"{hours:.{precision}f}"
@@ -83,17 +38,12 @@ def format_relative_hours(seconds: int, precision: int = 1) -> str:
     """
     将秒数格式化为相对时间描述：小时/天/周
 
-    规则:
-    - < 1 天：返回小时数
-    - < 7 天：返回天数
-    - 其他：返回周数
-
     参数:
-    - seconds: 秒数
-    - precision: 小数位数（用于小时）
+        seconds: 秒数
+        precision: 小数位数（用于小时）
 
     返回:
-    - 相对时间字符串
+        相对时间字符串
     """
     hours = seconds / 3600
     if hours >= 24 * 7:
@@ -110,10 +60,10 @@ def state_icon(state: str) -> str:
     根据比赛状态返回对应图标
 
     Args:
-    - state: 比赛状态（即将开始/进行中/已结束）
+        state: 比赛状态（即将开始/进行中/已结束）
 
     Returns:
-    - 对应状态的图标字符串
+        对应状态的图标字符串
     """
     mapping = {
         "即将开始": "⏳",
@@ -236,7 +186,6 @@ async def broadcast_text(api_client, group_listeners: dict, text: str):
         if enabled:
             await api_client.send_group_text(gid, text)
 
-
 def extract_contest_timing(contest: Contest, now_ts: int):
     """
     根据统一 Contest 对象计算比赛状态与剩余时间。
@@ -249,8 +198,8 @@ def extract_contest_timing(contest: Contest, now_ts: int):
     - (state, remaining_label, remaining_secs, duration_secs, start_ts, sort_key)
     - 比赛已结束返回 None。
     """
-    start_ts = int(contest.start_ts or 0)
-    duration = int(contest.duration_secs or 0)
+    start_ts = int(contest.start_time or 0)
+    duration = int(contest.duration or 0)
     if start_ts <= 0 or duration <= 0:
         return None
     end_ts = start_ts + duration
@@ -275,3 +224,4 @@ def extract_contest_timing(contest: Contest, now_ts: int):
             remaining,
         )
     return None
+

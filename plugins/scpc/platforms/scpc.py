@@ -1,12 +1,15 @@
 from typing import Optional, List, Any
 from dataclasses import dataclass, fields
+
+from httpx import AsyncClient
 from playwright.async_api import async_playwright
 
-from ..utils import *
-
 import os
-import requests
 import xlsxwriter
+
+from .platform import Platform, Contest
+from ..utils.network import *
+from ..utils.text import *
 
 
 # ----------------------------
@@ -14,21 +17,21 @@ import xlsxwriter
 # ----------------------------
 def scpc_user_info_url(username: str) -> str:
     """
-    返回查询 SCPC 用户主页信息的 API 地址
+    返回查询 SCPC 用户主页信息的 API'
 
     Args:
-    - username: SCPC 用户名
+        username: SCPC 用户名
     """
     return f"http://scpc.fun/api/get-user-home-info?username={username}"
 
 
 def scpc_contests_url(current_page: int = 0, limit: int = 10) -> str:
     """
-    返回查询 SCPC 比赛列表的 API 地址
+    返回查询 SCPC 比赛列表的 API'
 
     Args:
-    - current_page: 页码，从 0 开始
-    - limit: 每页条目数
+        current_page: 页码，从 0 开始
+        limit: 每页条目数
     """
     return (
         f"http://scpc.fun/api/get-contest-list?currentPage={current_page}&limit={limit}"
@@ -37,30 +40,37 @@ def scpc_contests_url(current_page: int = 0, limit: int = 10) -> str:
 
 def scpc_recent_contest_url() -> str:
     """
-    返回查询 SCPC 近期比赛的 API 地址
+    返回查询 SCPC 近期比赛的 API'
     """
     return f"http://scpc.fun/api/get-recent-contest"
 
 
 def scpc_recent_updated_problem_url():
     """
-    返回查询 SCPC 近期更新题目的 API 地址
+    返回查询 SCPC 近期更新题目的 API'
     """
     return f"http://scpc.fun/api/get-recent-updated-problem"
 
 
 def scpc_recent_ac_rank_url():
     """
-    返回查询 SCPC 最近一周过题排行的 API 地址
+    返回查询 SCPC 最近一周过题排行的 API'
     """
     return f"http://scpc.fun/api/get-recent-seven-ac-rank"
 
 
 def scpc_login_url() -> str:
     """
-    返回 SCPC 登录接口的 API 地址
+    返回 SCPC 登录接口的 API'
     """
     return f"http://scpc.fun/api/login"
+
+
+def scpc_contest_rank() -> str:
+    """
+    获取 SCPC 比赛排行榜 API
+    """
+    return f"http://scpc.fun/api/get-contest-rank"
 
 
 # ----------------------------
@@ -131,167 +141,201 @@ class ScpcUpdatedProblem:
     url: str  # 题目页面链接
 
 
+class SCPCPlatform(Platform):
+
+    def __init__(self, username: str, password: str):
+        super().__init__()
+        self.username = username
+        self.password = password
+        self.token = None
+
+    async def login(self):
+        async with AsyncClient() as client:
+            response = await client.post(
+                scpc_login_url(),
+                headers={
+                    "Host": "scpc.fun",
+                    "Origin": "http://scpc.fun",
+                    "Referer": "http://scpc.fun/home",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.77 Safari/537.36",
+                    "Connection": "close",
+                },
+                json={
+                    "password": self.password,
+                    "username": self.username,
+                },
+            )
+        self.token = response.headers["Authorization"]
+
+    async def get_contest_rank(self, contest_id: int) -> List[ScpcContestRankUser]:
+        response = await fetch_json(
+            scpc_contest_rank(),
+            method=Method.POST,
+            headers={
+                "Content-Type": "application/json",
+                "Host": "scpc.fun",
+                "Origin": "http://scpc.fun",
+                "Referer": "http://scpc.fun/home",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
+                "Authorization": self.token,
+            },
+            payload={
+                "currentPage": 0,
+                "limit": 999999,
+                "cid": contest_id,
+                "forceRefresh": False,
+                "removeStar": False,
+                "concernedList": [],
+                "keyword": None,
+                "containsEnd": False,
+                "time": None,
+            },
+        )
+        records = (
+            response.get("data", {}).get("records") or response.get("records") or []
+        )
+        rank_users: List[ScpcContestRankUser] = []
+        for entry in records:
+            submission_info = {}
+            for data in entry["submissionInfo"]:
+                information = entry["submissionInfo"][data]
+                submission_info[data] = ACMInformation(
+                    ac_time=int(information.get("ACTime", 0)),
+                    is_ac=bool(information.get("isAC", False)),
+                    error_count=int(information.get("errorNum", 0)),
+                    is_first_ac=bool(information.get("isFirstAC", False)),
+                )
+            rank_users.append(
+                ScpcContestRankUser(
+                    rank=int(entry.get("rank", 0)),
+                    award_name=str(entry.get("awardName", "")),
+                    user_name=str(entry.get("username", "")),
+                    real_name=str(entry.get("realname", "")),
+                    nick_name=str(entry.get("nickname", "")),
+                    school=str(entry.get("school", "")),
+                    total=int(entry.get("total", 0)),
+                    ac=int(entry.get("ac", 0)),
+                    total_time=int(entry.get("totalTime", 0)),
+                    information=submission_info,
+                )
+            )
+        print(rank_users)
+        return rank_users
+
+    async def get_week_rank(self) -> List[ScpcWeekACUser]:
+        response = await fetch_json(scpc_recent_ac_rank_url())
+        records = response["data"]
+        users: List[ScpcWeekACUser] = []
+        for entry in records:
+            users.append(
+                ScpcWeekACUser(
+                    username=str(entry.get("username", "")),
+                    avatar="http://scpc.fun" + str(entry.get("avatar", "")),
+                    title_name=str(entry.get("titleName", "")),
+                    title_color=str(entry.get("titleColor", "")),
+                    ac=int(entry.get("ac", 0)),
+                )
+            )
+        return users
+
+    async def get_user_info(self, username: str) -> ScpcUser:
+        response = await fetch_json(scpc_user_info_url(username))
+        data_obj = response.get("data") or {}
+        total = int(data_obj.get("total", 0))
+        solved = data_obj.get("solvedList") or []
+        nickname = str(data_obj.get("nickname") or username)
+        signature = str(data_obj.get("signature"))
+        avatar_val = str(data_obj.get("avatar", ""))
+        if avatar_val and not avatar_val.startswith("http"):
+            avatar_val = (
+                "http://scpc.fun" + avatar_val
+                if avatar_val.startswith("/")
+                else "http://scpc.fun/" + avatar_val
+            )
+        return ScpcUser(
+            total=total,
+            solved_list=solved,
+            nickname=nickname,
+            signature=signature,
+            avatar=avatar_val,
+        )
+
+    async def get_recent_contests(self) -> Optional[List[Contest]]:
+        """
+        获取 SCPC 近期比赛并直接返回统一 `Contest` 列表
+        """
+        response = await fetch_json(scpc_recent_contest_url())
+        if not response or "data" not in response:
+            return None
+        records = response.get("data") or []
+        contest_list: List[Contest] = []
+        for record in records:
+            name = str(record.get("title") or "未命名比赛")
+            start_time = record.get("startTime")
+            duration_secs = int(record.get("duration") or 0)
+            cid = int(
+                record.get("id") or record.get("contestId") or record.get("cid") or 0
+            )
+            url = f"http://scpc.fun/contest/{cid}" if cid else "http://scpc.fun/contest"
+            contest_list.append(
+                Contest(
+                    name=name,
+                    id=cid,
+                    start_time=parse_scpc_time(start_time),
+                    duration=duration_secs,
+                    url=url,
+                )
+            )
+        return contest_list
+
+    async def get_recent_updated_problems(self) -> List[ScpcUpdatedProblem]:
+        response = await fetch_json(scpc_recent_updated_problem_url())
+        records = response.get("data") or []
+        problems: List[ScpcUpdatedProblem] = []
+        for entry in records:
+            problems.append(
+                ScpcUpdatedProblem(
+                    id=int(entry.get("id", 0)),
+                    problem_id=str(entry.get("problemId", "")),
+                    title=str(entry.get("title", "")),
+                    type=int(entry.get("type", 0)),
+                    gmt_create=parse_scpc_time(entry.get("gmtCreate")),
+                    gmt_modified=parse_scpc_time(entry.get("gmtModified")),
+                    url=f"http://scpc.fun/problem/{entry.get('problemId', '')}",
+                )
+            )
+        return problems
+
+    async def get_contests(self) -> List[Contest]:
+        json_data = await fetch_json(scpc_contests_url())
+        records = (
+            json_data.get("data", {}).get("records") or json_data.get("records") or []
+        )
+        contests: List[Contest] = []
+        for record in records:
+            name = record.get("title") or record.get("contestName") or "未命名比赛"
+            start_time = record.get("startTime")
+            duration_secs = int(record.get("duration") or 0)
+            cid = int(
+                record.get("id") or record.get("contestId") or record.get("cid") or 0
+            )
+            url = f"http://scpc.fun/contest/{cid}" if cid else "http://scpc.fun/contest"
+            contests.append(
+                Contest(
+                    name=str(name),
+                    id=cid,
+                    start_time=parse_scpc_time(start_time),
+                    duration=duration_secs,
+                    url=url,
+                )
+            )
+        return contests
+
+
 # ----------------------------
 # region 核心功能函数
 # ----------------------------
-def scpc_login(username: str, password: str) -> Optional[str]:
-    """
-    登录 SCPC 并返回授权 Token
-
-    Args:
-    - username: 用户名
-    - password: 密码
-
-    Returns:
-    - 授权 Token登录失败返回 None
-    """
-    response = requests.post(
-        scpc_login_url(),
-        headers={
-            "Content-Type": "application/json",
-            "Host": "scpc.fun",
-            "Origin": "http://scpc.fun",
-            "Referer": "http://scpc.fun/home",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
-        },
-        json={
-            "password": password,
-            "username": username,
-        },
-    )
-    if response.status_code != 200:
-        return None
-    return response.headers.get("Authorization")
-
-
-def get_scpc_contest_rank(
-    contest_id: int,
-    token: str,
-) -> Optional[List[ScpcContestRankUser]]:
-    """
-    获取指定比赛的过题排行榜
-
-    Args:
-    - contest_id: 比赛 ID
-    - token: 授权 Token
-    - current_page: 页码
-    - limit: 每页条目数
-
-    Returns:
-    - `ScpcContestRankUser` 列表请求失败或解析失败返回 None
-    """
-    response = requests.post(
-        "http://scpc.fun/api/get-contest-rank",
-        headers={
-            "Content-Type": "application/json",
-            "Host": "scpc.fun",
-            "Origin": "http://scpc.fun",
-            "Referer": "http://scpc.fun/home",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
-            "Authorization": token,
-        },
-        json={
-            "currentPage": 0,
-            "limit": 999999,
-            "cid": contest_id,
-            "forceRefresh": False,
-            "removeStar": False,
-            "concernedList": [],
-            "keyword": None,
-            "containsEnd": False,
-            "time": None,
-        },
-    )
-    if response.status_code != 200:
-        return None
-    try:
-        json_data = response.json()
-    except Exception:
-        return None
-
-    records = json_data.get("data", {}).get("records") or json_data.get("records") or []
-    rank_users: List[ScpcContestRankUser] = []
-    for entry in records:
-        submission_info = {}
-        for data in entry["submissionInfo"]:
-            information = entry["submissionInfo"][data]
-            submission_info[data] = ACMInformation(
-                ac_time=int(information.get("ACTime", 0)),
-                is_ac=bool(information.get("isAC", False)),
-                error_count=int(information.get("errorNum", 0)),
-                is_first_ac=bool(information.get("isFirstAC", False)),
-            )
-        rank_users.append(
-            ScpcContestRankUser(
-                rank=int(entry.get("rank", 0)),
-                award_name=str(entry.get("awardName", "")),
-                user_name=str(entry.get("username", "")),
-                real_name=str(entry.get("realname", "")),
-                nick_name=str(entry.get("nickname", "")),
-                school=str(entry.get("school", "")),
-                total=int(entry.get("total", 0)),
-                ac=int(entry.get("ac", 0)),
-                total_time=int(entry.get("totalTime", 0)),
-                information=submission_info,
-            )
-        )
-    return rank_users
-
-
-def get_scpc_rank() -> Optional[List[ScpcWeekACUser]]:
-    """
-    获取 SCPC 最近一周过题排行列表
-
-    返回:
-    - `ScpcWeekACUser` 列表失败返回 None
-    """
-    response = fetch_json(scpc_recent_ac_rank_url())
-    if not response or "data" not in response:
-        return None
-    records = response["data"]
-    users: List[ScpcWeekACUser] = []
-    for entry in records:
-        users.append(
-            ScpcWeekACUser(
-                username=str(entry.get("username", "")),
-                avatar="http://scpc.fun" + str(entry.get("avatar", "")),
-                title_name=str(entry.get("titleName", "")),
-                title_color=str(entry.get("titleColor", "")),
-                ac=int(entry.get("ac", 0)),
-            )
-        )
-    return users
-
-
-def get_scpc_user_info(username: str) -> Optional[ScpcUser]:
-    """
-    获取 SCPC 用户主页信息并解析为 `ScpcUser`
-
-    Args:
-    - username: 用户名
-    """
-    response = fetch_json(scpc_user_info_url(username))
-    if not response or "data" not in response:
-        return None
-    data_obj = response.get("data") or {}
-    total = int(data_obj.get("total", 0))
-    solved = data_obj.get("solvedList") or []
-    nickname = str(data_obj.get("nickname") or username)
-    signature = str(data_obj.get("signature"))
-    avatar_val = str(data_obj.get("avatar", ""))
-    if avatar_val and not avatar_val.startswith("http"):
-        avatar_val = (
-            "http://scpc.fun" + avatar_val
-            if avatar_val.startswith("/")
-            else "http://scpc.fun/" + avatar_val
-        )
-    return ScpcUser(
-        total=total,
-        solved_list=solved,
-        nickname=nickname,
-        signature=signature,
-        avatar=avatar_val,
-    )
 
 
 async def render_scpc_week_rank_image(users: list) -> str | None:
@@ -528,7 +572,7 @@ async def render_scpc_contests_image(contests: List[Contest]) -> str | None:
             start_str = format_timestamp(start_ts)
             remaining_str = format_relative_hours(remaining_secs, precision=1)
             duration_str = format_hours(duration_secs, precision=1)
-            cid = c.contest_id
+            cid = c.id
             id_pill = "" if not cid else f"<span class='pill'>ID {cid}</span>"
             rows.append(
                 f"""
@@ -612,96 +656,6 @@ async def render_scpc_contests_image(contests: List[Contest]) -> str | None:
         return out_path if ok else None
     except Exception:
         return None
-
-
-def get_scpc_contests(
-    current_page: int = 0, limit: int = 10
-) -> Optional[List[Contest]]:
-    json_data = fetch_json(scpc_contests_url(current_page, limit))
-    if not json_data:
-        return None
-    records = json_data.get("data", {}).get("records") or json_data.get("records") or []
-    contests: List[Contest] = []
-    for record in records:
-        try:
-            name = record.get("title") or record.get("contestName") or "未命名比赛"
-            start_time = record.get("startTime")
-            duration_secs = int(record.get("duration") or 0)
-            cid = int(
-                record.get("id") or record.get("contestId") or record.get("cid") or 0
-            )
-            url = f"http://scpc.fun/contest/{cid}" if cid else "http://scpc.fun/contest"
-            contests.append(
-                Contest(
-                    name=str(name),
-                    contest_id=cid,
-                    start_ts=parse_scpc_time(start_time),
-                    duration_secs=duration_secs,
-                    url=url,
-                )
-            )
-        except Exception:
-            continue
-    return contests
-
-
-def get_scpc_recent_contests() -> Optional[List[Contest]]:
-    """
-    获取 SCPC 近期比赛并直接返回统一 `Contest` 列表
-    """
-    response = fetch_json(scpc_recent_contest_url())
-    if not response or "data" not in response:
-        return None
-    records = response.get("data") or []
-    contest_list: List[Contest] = []
-    for record in records:
-        try:
-            name = str(record.get("title") or "未命名比赛")
-            start_time = record.get("startTime")
-            duration_secs = int(record.get("duration") or 0)
-            cid = int(
-                record.get("id") or record.get("contestId") or record.get("cid") or 0
-            )
-            url = f"http://scpc.fun/contest/{cid}" if cid else "http://scpc.fun/contest"
-            contest_list.append(
-                Contest(
-                    name=name,
-                    contest_id=cid,
-                    start_ts=parse_scpc_time(start_time),
-                    duration_secs=duration_secs,
-                    url=url,
-                )
-            )
-        except Exception:
-            continue
-    return contest_list
-
-
-def get_scpc_recent_updated_problems() -> Optional[List[ScpcUpdatedProblem]]:
-    """
-    获取 SCPC 近期更新题目并解析为 `ScpcUpdatedProblem` 列表
-
-    Returns:
-    - `ScpcUpdatedProblem` 列表失败返回 None
-    """
-    response = fetch_json(scpc_recent_updated_problem_url())
-    if not response or "data" not in response:
-        return None
-    records = response.get("data") or []
-    problems: List[ScpcUpdatedProblem] = []
-    for entry in records:
-        problems.append(
-            ScpcUpdatedProblem(
-                id=int(entry.get("id", 0)),
-                problem_id=str(entry.get("problemId", "")),
-                title=str(entry.get("title", "")),
-                type=int(entry.get("type", 0)),
-                gmt_create=parse_scpc_time(entry.get("gmtCreate")),
-                gmt_modified=parse_scpc_time(entry.get("gmtModified")),
-                url=f"http://scpc.fun/problem/{entry.get('problemId', '')}",
-            )
-        )
-    return problems
 
 
 def generate_excel_contest_rank(rank_users: List[ScpcContestRankUser], contest_id: int):
