@@ -1,11 +1,12 @@
 from datetime import datetime
-import math
 from typing import Optional, Dict, Any
-import requests
 from ncatbot.utils import get_log
 from dataclasses import dataclass
 
-_logger = get_log()
+import math
+import requests
+
+LOG = get_log()
 
 headers = {
     "Content-Type": "application/json",
@@ -15,38 +16,37 @@ headers = {
 
 @dataclass
 class Contest:
-    name: str
-    contest_id: int | None
-    start_ts: int
-    duration_secs: int
-    url: str | None
+    name: str  # 比赛名称
+    start_ts: int  # 开始时间戳（秒）
+    url: str | None  # 比赛链接
+    duration_secs: int  # 持续时间（秒）
+    contest_id: int | None  # 比赛ID
 
 
-def fetch_json(url: str, timeout: int = 10) -> Optional[Dict[str, Any]]:
+def fetch_json(url: str, headers: dict = headers) -> Optional[Dict[str, Any]]:
     """
     使用统一请求头发起 GET 请求并解析 JSON 响应
 
     Args:
     - url: 请求地址
-    - timeout: 超时时间 (秒)
 
     Returns:
     - 解析后的 JSON 字典; 失败返回 None
     """
     try:
-        resp = requests.get(url, headers=headers, timeout=timeout)
+        response = requests.get(url, headers=headers, timeout=10)
     except Exception as e:
-        _logger.warning(f"HTTP 请求失败: {e}")
+        LOG.warning(f"HTTP 请求失败: {e}")
         return None
-    if getattr(resp, "status_code", 0) != 200:
-        _logger.warning(
-            f'请求 {url} 返回状态码异常: {getattr(resp, "status_code", "")} {getattr(resp, "text", "")}'
+    if response.status_code != 200:
+        LOG.warning(
+            f"请求 {url} 返回状态码异常: {response.status_code} {response.text}"
         )
         return None
     try:
-        return resp.json()
+        return response.json()
     except Exception as e:
-        _logger.warning(f"JSON 解析失败: {e}")
+        LOG.warning(f"JSON 解析失败: {e}")
         return None
 
 
@@ -173,25 +173,6 @@ def format_contest_text(
     if contest_url:
         lines.append(f"比赛地址: {contest_url}")
     return "\n".join(lines)
-
-
-def format_rank_text(
-    username: str, avatar: str, title_name: str, title_color: str, ac: int
-) -> str:
-    """
-    将排行榜用户信息格式化为展示文本
-
-    Args:
-    - username: 用户名
-    - avatar: 头像 URL（当前未展示）
-    - title_name: 头衔名称
-    - title_color: 头衔颜色（当前未展示）
-    - ac: 通过题目数量
-
-    Returns:
-    - 格式化后的多行文本
-    """
-    return f"用户: {username}\n" f"头衔: {title_name}\n" f"AC: {ac}"
 
 
 def parse_scpc_time(value) -> int:

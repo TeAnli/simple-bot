@@ -1,49 +1,20 @@
 from datetime import datetime
 from dataclasses import dataclass
-from os import name
 
 from ncatbot.core import GroupMessageEvent
 from ncatbot.plugin_system import NcatBotPlugin, group_admin_filter, group_filter
 from ncatbot.plugin_system import command_registry
 from ncatbot.utils import get_log
 
-import random
-import requests
-import os
+from .platforms.nowcoder import get_nowcoder_recent_contests
+from .platforms.codeforces import *
+from .platforms.scpc import *
 
-from .platforms.codeforces import (
-    get_codeforces_contests,
-    get_codeforces_user_rating,
-)
-from .platforms.scpc import (
-    generate_excel_contest_rank,
-    get_scpc_user_info,
-    get_scpc_contests,
-    scpc_login,
-    get_scpc_contest_rank,
-    get_scpc_recent_contests,
-    get_scpc_recent_updated_problems,
-    get_scpc_rank as fetch_scpc_week_rank,
-    render_scpc_week_rank_image,
-    render_scpc_user_info_image,
-    render_scpc_contests_image,
-)
-from .utils import (
-    calculate_accept_ratio,
-    format_contest_text,
-    broadcast_text,
-    format_timestamp,
-    Contest,
-    extract_contest_timing,
-)
-from .platforms.nowcoder import (
-    get_nowcoder_recent_contests,
-)
+from .utils import *
+
+import random
 
 LOG = get_log()
-
-DEFAULT_SCPC_USERNAME = "player281"
-DEFAULT_SCPC_PASSWORD = "123456"
 
 
 @dataclass
@@ -92,13 +63,16 @@ def get_aggregated_contests(
 
 class SCPCPlugin(NcatBotPlugin):
     name = "SCPC"
-    version = "0.0.2"
+    version = "0.0.3"
     author = "TeAnli"
     description = "专为西南科技大学 SCPC 团队 打造的 ncatbot 机器人插件"
 
     group_listeners = dict[str, bool]()
     cf_alerted_ids = set[int]()
 
+    # ----------------------------
+    # region 插件生命周期方法
+    # ----------------------------
     async def on_load(self):
         """
         注册比赛监听的定时任务 (每 30 分钟执行一次)
@@ -116,11 +90,11 @@ class SCPCPlugin(NcatBotPlugin):
 
     async def _listen_task(self):
         """
-        定时任务主体: 检查 CF 与 SCPC 比赛, 在开始前限定时间内提醒开启监听的群
+        定时任务主体: 在开始前限定时间内提醒开启监听的群
         """
         LOG.info(f"检测群组和比赛任务 订阅比赛提醒的群组: {self.group_listeners}")
         if not any(self.group_listeners.values()):
-            LOG.info("CF 比赛监听已禁用或未配置群组.")
+            LOG.info("比赛监听已禁用或未配置群组.")
             return
         await self._check_cf_contests_and_notify(threshold_hours=2)
         await self._check_scpc_contests_and_notify(threshold_hours=2)
@@ -181,7 +155,12 @@ class SCPCPlugin(NcatBotPlugin):
         skip_verify_name: bool = False,
     ) -> list[tuple[int, str]]:
         now_ts = int(datetime.now().timestamp())
-        source_map = {"cf": "Codeforces", "scpc": "SCPC", "nowcoder": "牛客"}
+        source_map = {
+            "cf": "Codeforces",
+            "scpc": "SCPC",
+            "nowcoder": "牛客",
+            "luogu": "洛谷",
+        }
         label = source_map.get(source, source) if source else None
         items: list[tuple[int, str]] = []
         for c in contests:
@@ -273,6 +252,26 @@ class SCPCPlugin(NcatBotPlugin):
             "限定时间内无即将开始的 SCPC 比赛，不发送通知",
         )
 
+    async def _get_codeforces_contests(self, group_id: str):
+        contests = get_codeforces_contests()
+        if contests is None:
+            LOG.warning("获取 CF 比赛失败：请求异常或状态不正确")
+            await self.api.send_group_text(
+                group_id, "暂时无法获取 Codeforces 比赛信息, 请稍后重试"
+            )
+            return
+        LOG.info(f"获取 CF 比赛列表：共 {len(contests)} 场")
+        texts = self._build_contest_texts(contests, include_id=True, source="cf")
+        if texts:
+            await self.api.send_group_text(group_id, "\n\n".join([t for _, t in texts]))
+        else:
+            await self.api.send_group_text(
+                group_id, "近期暂无即将开始或进行中的 Codeforces 比赛"
+            )
+
+    # ----------------------------
+    # region 命令注册
+    # ----------------------------
     @command_registry.command("来个男神", description="随机发送一张男神照片")
     @group_admin_filter
     @group_filter
@@ -340,60 +339,10 @@ class SCPCPlugin(NcatBotPlugin):
         )
         await self.api.send_group_text(event.group_id, user_text)
 
-    async def _get_codeforces_contests(self, group_id: str):
-        """
-        概述:
-        拉取 CF 比赛列表并格式化后发送到指定群
-
-        参数:
-        - group_id: 目标群组 ID
-        """
-        contests = get_codeforces_contests()
-        if contests is None:
-            LOG.warning("获取 CF 比赛失败：请求异常或状态不正确")
-            await self.api.send_group_text(
-                group_id, "暂时无法获取 Codeforces 比赛信息, 请稍后重试"
-            )
-            return
-        LOG.info(f"获取 CF 比赛列表：共 {len(contests)} 场")
-        texts = self._build_contest_texts(contests, include_id=True, source="cf")
-        if texts:
-            await self.api.send_group_text(group_id, "\n\n".join([t for _, t in texts]))
-        else:
-            await self.api.send_group_text(
-                group_id, "近期暂无即将开始或进行中的 Codeforces 比赛"
-            )
-
-    @command_registry.command("scpc比赛", description="获取SCPC比赛信息")
-    @group_filter
-    async def get_scpc_contests(self, event: GroupMessageEvent):
-        records = get_scpc_contests()
-        if records is None:
-            LOG.warning("获取 SCPC 比赛失败：无数据")
-            await self.api.send_group_text(
-                event.group_id, "暂时无法获取 SCPC 比赛信息, 请稍后重试"
-            )
-            return
-        img_path = await render_scpc_contests_image(records)
-        if img_path:
-            await self.api.send_group_image(event.group_id, img_path)
-            return
-        texts = self._build_contest_texts(
-            records, include_id=False, source="scpc", skip_verify_name=True
-        )
-        if texts:
-            await self.api.send_group_text(
-                event.group_id, "\n\n".join([t for _, t in texts])
-            )
-        else:
-            await self.api.send_group_text(
-                event.group_id, "近期暂无即将开始或进行中的 SCPC 比赛"
-            )
-
     @command_registry.command("scpc排行", description="获取SCPC最近一周过题排行")
     @group_filter
     async def get_scpc_week_rank_command(self, event: GroupMessageEvent):
-        records = fetch_scpc_week_rank()
+        records = get_scpc_rank()
         if records is None:
             LOG.warning("获取 SCPC 排行失败：无数据")
             await self.api.send_group_text(
@@ -457,6 +406,42 @@ class SCPCPlugin(NcatBotPlugin):
                 event.group_id, "近期暂无即将开始或进行中的 SCPC 比赛"
             )
 
+    @command_registry.command("牛客比赛", description="获取牛客近期比赛信息")
+    @group_filter
+    async def get_nowcoder_recent_contests_command(self, event: GroupMessageEvent):
+        contests = get_nowcoder_recent_contests()
+        if not contests:
+            await self.api.send_group_text(
+                event.group_id, "暂时无法获取牛客近期比赛信息, 请稍后重试"
+            )
+            return
+        texts = self._build_contest_texts(contests, include_id=True, source="nowcoder")
+        await self.api.send_group_text(
+            event.group_id, "\n\n".join([t for _, t in texts])
+        )
+
+    @command_registry.command("洛谷比赛", description="获取洛谷比赛信息")
+    @group_filter
+    async def get_luogu_contests(self, event: GroupMessageEvent):
+        from .platforms.luogu import get_luogu_contest
+
+        contests = get_luogu_contest()
+        if contests is None:
+            LOG.warning("获取 洛谷 比赛失败：无数据")
+            await self.api.send_group_text(
+                event.group_id, "暂时无法获取 洛谷 比赛信息, 请稍后重试"
+            )
+            return
+        texts = self._build_contest_texts(contests, include_id=True, source="luogu")
+        if texts:
+            await self.api.send_group_text(
+                event.group_id, "\n\n".join([t for _, t in texts])
+            )
+        else:
+            await self.api.send_group_text(
+                event.group_id, "近期暂无即将开始或进行中的 洛谷 比赛"
+            )
+
     @command_registry.command("scpc近期更新题目", description="获取近期SCPC更新题目")
     @group_filter
     async def get_recent_scpc_updated_problems(self, event: GroupMessageEvent):
@@ -479,20 +464,6 @@ class SCPCPlugin(NcatBotPlugin):
                 f"题目: {p.title}\nID: {p.problem_id}\n更新时间: {time_str}\n地址: {p.url}"
             )
         await self.api.send_group_text(event.group_id, "\n".join(lines))
-
-    @command_registry.command("牛客比赛", description="获取牛客近期比赛信息")
-    @group_filter
-    async def get_nowcoder_recent_contests_command(self, event: GroupMessageEvent):
-        contests = get_nowcoder_recent_contests()
-        if not contests:
-            await self.api.send_group_text(
-                event.group_id, "暂时无法获取牛客近期比赛信息, 请稍后重试"
-            )
-            return
-        texts = self._build_contest_texts(contests, include_id=True, source="nowcoder")
-        await self.api.send_group_text(
-            event.group_id, "\n\n".join([t for _, t in texts])
-        )
 
     @command_registry.command("近期比赛", description="统一展示CF/SCPC/牛客的近期比赛")
     @group_filter
@@ -519,37 +490,12 @@ class SCPCPlugin(NcatBotPlugin):
         await self.api.send_group_text(
             event.group_id, "\n\n".join([t for _, t in collected])
         )
-    @command_registry.command("洛谷比赛", description="获取洛谷比赛信息")
-    @group_filter
-    async def get_luogu_contests(self, event: GroupMessageEvent):
-        from .platforms.luogu import get_luogu_contest
 
-        contests = get_luogu_contest()
-        if contests is None:
-            LOG.warning("获取 洛谷 比赛失败：无数据")
-            await self.api.send_group_text(
-                event.group_id, "暂时无法获取 洛谷 比赛信息, 请稍后重试"
-            )
-            return
-        texts = self._build_contest_texts(contests, include_id=True, source="luogu")
-        if texts:
-            await self.api.send_group_text(
-                event.group_id, "\n\n".join([t for _, t in texts])
-            )
-        else:
-            await self.api.send_group_text(
-                event.group_id, "近期暂无即将开始或进行中的 洛谷 比赛"
-            )
-    
-    @command_registry.command(
-        "生成比赛排行", description="生成指定比赛的排行榜Excel表格"
-    )
+    @command_registry.command("scpc比赛排行", description="生成比赛的排行榜Excel表格")
     @group_filter
-    async def get_scpc_contest_rank_command(
-        self, event: GroupMessageEvent, contest_id: int
-    ):
-        username = DEFAULT_SCPC_USERNAME
-        password = DEFAULT_SCPC_PASSWORD
+    async def get_scpc_contest_rank(self, event: GroupMessageEvent, contest_id: int):
+        username = "player281"
+        password = "123456"
         token = scpc_login(username, password)
         if not token:
             await self.api.send_group_text(
@@ -565,5 +511,8 @@ class SCPCPlugin(NcatBotPlugin):
             excel_path = generate_excel_contest_rank(
                 rank_users=ranks, contest_id=contest_id
             )
-            await self.api.send_group_file(event.group_id, file=excel_path)
+            try:
+                await self.api.send_group_file(event.group_id, file=excel_path)
+            except Exception as e:
+                await self.api.send_group_text(event.group_id, f"发送文件失败: {e}")
             pass

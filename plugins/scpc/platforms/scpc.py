@@ -1,23 +1,17 @@
 from typing import Optional, List, Any
 from dataclasses import dataclass, fields
-
-from openpyxl import Workbook
-from ..utils import fetch_json
-from ..utils import parse_scpc_time
-from ..utils import Contest
-from ..utils import (
-    extract_contest_timing,
-    format_timestamp,
-    format_hours,
-    format_relative_hours,
-    state_icon,
-)
 from playwright.async_api import async_playwright
+
+from ..utils import *
+
 import os
 import requests
 import xlsxwriter
 
 
+# ----------------------------
+# region API URL 构建函数
+# ----------------------------
 def scpc_user_info_url(username: str) -> str:
     """
     返回查询 SCPC 用户主页信息的 API 地址
@@ -41,21 +35,21 @@ def scpc_contests_url(current_page: int = 0, limit: int = 10) -> str:
     )
 
 
-def scpc_recent_contest() -> str:
+def scpc_recent_contest_url() -> str:
     """
     返回查询 SCPC 近期比赛的 API 地址
     """
     return f"http://scpc.fun/api/get-recent-contest"
 
 
-def scpc_recent_updated_problem():
+def scpc_recent_updated_problem_url():
     """
     返回查询 SCPC 近期更新题目的 API 地址
     """
     return f"http://scpc.fun/api/get-recent-updated-problem"
 
 
-def scpc_recent_ac_rank():
+def scpc_recent_ac_rank_url():
     """
     返回查询 SCPC 最近一周过题排行的 API 地址
     """
@@ -69,6 +63,9 @@ def scpc_login_url() -> str:
     return f"http://scpc.fun/api/login"
 
 
+# ----------------------------
+# region 数据类定义
+# ----------------------------
 @dataclass
 class ScpcUser:
     total: int  # 总提交数
@@ -109,7 +106,7 @@ class ScpcContestRankUser:
     information: dict[int, ACMInformation]  # 题目提交信息，键为题目ID
 
     @classmethod
-    def get_chinese_headers(cls):
+    def get_chinese_headers(cls) -> dict[str, str]:
         return {
             "rank": "排名",
             "award_name": "奖项",
@@ -134,6 +131,9 @@ class ScpcUpdatedProblem:
     url: str  # 题目页面链接
 
 
+# ----------------------------
+# region 核心功能函数
+# ----------------------------
 def scpc_login(username: str, password: str) -> Optional[str]:
     """
     登录 SCPC 并返回授权 Token
@@ -211,27 +211,27 @@ def get_scpc_contest_rank(
 
     records = json_data.get("data", {}).get("records") or json_data.get("records") or []
     rank_users: List[ScpcContestRankUser] = []
-    for record in records:
+    for entry in records:
         submission_info = {}
-        for data in record["submissionInfo"]:
-            information = record["submissionInfo"][data]
+        for data in entry["submissionInfo"]:
+            information = entry["submissionInfo"][data]
             submission_info[data] = ACMInformation(
-                ac_time=int(information.get("ACTime", 0) or 0),
-                is_ac=bool(information.get("isAC", False) or False),
-                error_count=int(information.get("errorNum", 0) or 0),
-                is_first_ac=bool(information.get("isFirstAC", False) or False),
+                ac_time=int(information.get("ACTime", 0)),
+                is_ac=bool(information.get("isAC", False)),
+                error_count=int(information.get("errorNum", 0)),
+                is_first_ac=bool(information.get("isFirstAC", False)),
             )
         rank_users.append(
             ScpcContestRankUser(
-                rank=int(record.get("rank", 0)),
-                award_name=str(record.get("awardName", "") or ""),
-                user_name=str(record.get("username", "") or ""),
-                real_name=str(record.get("realname", "") or ""),
-                nick_name=str(record.get("nickname", "") or ""),
-                school=str(record.get("school", "") or ""),
-                total=int(record.get("total", 0)),
-                ac=int(record.get("ac", 0)),
-                total_time=int(record.get("totalTime", 0)),
+                rank=int(entry.get("rank", 0)),
+                award_name=str(entry.get("awardName", "")),
+                user_name=str(entry.get("username", "")),
+                real_name=str(entry.get("realname", "")),
+                nick_name=str(entry.get("nickname", "")),
+                school=str(entry.get("school", "")),
+                total=int(entry.get("total", 0)),
+                ac=int(entry.get("ac", 0)),
+                total_time=int(entry.get("totalTime", 0)),
                 information=submission_info,
             )
         )
@@ -245,34 +245,21 @@ def get_scpc_rank() -> Optional[List[ScpcWeekACUser]]:
     返回:
     - `ScpcWeekACUser` 列表失败返回 None
     """
-    json_data = fetch_json(scpc_recent_ac_rank())
-    if not json_data or "data" not in json_data:
+    response = fetch_json(scpc_recent_ac_rank_url())
+    if not response or "data" not in response:
         return None
-    records = json_data.get("data") or []
+    records = response["data"]
     users: List[ScpcWeekACUser] = []
     for entry in records:
-        try:
-            username = entry.get("username") or ""
-            avatar = str(entry.get("avatar") or "")
-            avatar = (
-                "http://scpc.fun" + avatar
-                if avatar.startswith("/")
-                else "http://scpc.fun/" + avatar
+        users.append(
+            ScpcWeekACUser(
+                username=str(entry.get("username", "")),
+                avatar="http://scpc.fun" + str(entry.get("avatar", "")),
+                title_name=str(entry.get("titleName", "")),
+                title_color=str(entry.get("titleColor", "")),
+                ac=int(entry.get("ac", 0)),
             )
-            title_name = entry.get("titleName") or ""
-            title_color = entry.get("titleColor") or ""
-            ac = int(entry.get("ac", 0))
-            users.append(
-                ScpcWeekACUser(
-                    username=username,
-                    avatar=avatar,
-                    title_name=title_name,
-                    title_color=title_color,
-                    ac=ac,
-                )
-            )
-        except Exception:
-            continue
+        )
     return users
 
 
@@ -283,15 +270,15 @@ def get_scpc_user_info(username: str) -> Optional[ScpcUser]:
     Args:
     - username: 用户名
     """
-    json_data = fetch_json(scpc_user_info_url(username))
-    if not json_data or "data" not in json_data:
+    response = fetch_json(scpc_user_info_url(username))
+    if not response or "data" not in response:
         return None
-    data_obj = json_data.get("data") or {}
+    data_obj = response.get("data") or {}
     total = int(data_obj.get("total", 0))
     solved = data_obj.get("solvedList") or []
     nickname = str(data_obj.get("nickname") or username)
-    signature = str(data_obj.get("signature") or "")
-    avatar_val = str(data_obj.get("avatar", "") or "")
+    signature = str(data_obj.get("signature"))
+    avatar_val = str(data_obj.get("avatar", ""))
     if avatar_val and not avatar_val.startswith("http"):
         avatar_val = (
             "http://scpc.fun" + avatar_val
@@ -311,7 +298,7 @@ async def render_scpc_week_rank_image(users: list) -> str | None:
     try:
 
         def hex_to_rgb_str(h: str, default: str = "0,150,60"):
-            h = (h or "").strip().lstrip("#")
+            h = (h).strip().lstrip("#")
             if len(h) == 6:
                 try:
                     r = int(h[0:2], 16)
@@ -325,9 +312,9 @@ async def render_scpc_week_rank_image(users: list) -> str | None:
         rows = []
         for i, u in enumerate(users, start=1):
             title_rgb = hex_to_rgb_str(getattr(u, "title_color", ""))
-            title_name = getattr(u, "title_name", "") or ""
-            username = getattr(u, "username", "") or ""
-            avatar = getattr(u, "avatar", "") or ""
+            title_name = getattr(u, "title_name", "")
+            username = getattr(u, "username", "")
+            avatar = getattr(u, "avatar", "")
             ac = int(getattr(u, "ac", 0))
             rank_color = (
                 "#FFD700"
@@ -541,7 +528,7 @@ async def render_scpc_contests_image(contests: List[Contest]) -> str | None:
             start_str = format_timestamp(start_ts)
             remaining_str = format_relative_hours(remaining_secs, precision=1)
             duration_str = format_hours(duration_secs, precision=1)
-            cid = c.contest_id or ""
+            cid = c.contest_id
             id_pill = "" if not cid else f"<span class='pill'>ID {cid}</span>"
             rows.append(
                 f"""
@@ -630,9 +617,6 @@ async def render_scpc_contests_image(contests: List[Contest]) -> str | None:
 def get_scpc_contests(
     current_page: int = 0, limit: int = 10
 ) -> Optional[List[Contest]]:
-    """
-    获取 SCPC 比赛列表并直接返回统一 `Contest` 列表
-    """
     json_data = fetch_json(scpc_contests_url(current_page, limit))
     if not json_data:
         return None
@@ -665,10 +649,10 @@ def get_scpc_recent_contests() -> Optional[List[Contest]]:
     """
     获取 SCPC 近期比赛并直接返回统一 `Contest` 列表
     """
-    json_data = fetch_json(scpc_recent_contest())
-    if not json_data:
+    response = fetch_json(scpc_recent_contest_url())
+    if not response or "data" not in response:
         return None
-    records = json_data.get("data") or []
+    records = response.get("data") or []
     contest_list: List[Contest] = []
     for record in records:
         try:
@@ -700,34 +684,24 @@ def get_scpc_recent_updated_problems() -> Optional[List[ScpcUpdatedProblem]]:
     Returns:
     - `ScpcUpdatedProblem` 列表失败返回 None
     """
-    body = fetch_json(scpc_recent_updated_problem())
-    if not body:
+    response = fetch_json(scpc_recent_updated_problem_url())
+    if not response or "data" not in response:
         return None
-    raw = body.get("data") or []
-    items: List[ScpcUpdatedProblem] = []
-    for r in raw:
-        try:
-            rid = int(r.get("id", 0))
-            pid = str(r.get("problemId", "") or "")
-            title = str(r.get("title", "") or "")
-            typ = int(r.get("type", 0))
-            created = parse_scpc_time(r.get("gmtCreate"))
-            modified = parse_scpc_time(r.get("gmtModified"))
-            url = f"http://scpc.fun/problem/{pid}" if pid else "http://scpc.fun/problem"
-            items.append(
-                ScpcUpdatedProblem(
-                    id=rid,
-                    problem_id=pid,
-                    title=title,
-                    type=typ,
-                    gmt_create=created,
-                    gmt_modified=modified,
-                    url=url,
-                )
+    records = response.get("data") or []
+    problems: List[ScpcUpdatedProblem] = []
+    for entry in records:
+        problems.append(
+            ScpcUpdatedProblem(
+                id=int(entry.get("id", 0)),
+                problem_id=str(entry.get("problemId", "")),
+                title=str(entry.get("title", "")),
+                type=int(entry.get("type", 0)),
+                gmt_create=parse_scpc_time(entry.get("gmtCreate")),
+                gmt_modified=parse_scpc_time(entry.get("gmtModified")),
+                url=f"http://scpc.fun/problem/{entry.get('problemId', '')}",
             )
-        except Exception:
-            continue
-    return items
+        )
+    return problems
 
 
 def generate_excel_contest_rank(rank_users: List[ScpcContestRankUser], contest_id: int):
@@ -767,9 +741,6 @@ def generate_excel_contest_rank(rank_users: List[ScpcContestRankUser], contest_i
     chinese_headers = rank_users[0].get_chinese_headers()
     chinese_field_names = [chinese_headers[field_name] for field_name in field_names]
 
-    print(f"字段名: {field_names}")
-    print(f"中文表头: {chinese_field_names}")
-
     last_index = 0
     for col, chinese_name in enumerate(chinese_field_names):
         worksheet.write(0, col, chinese_name, header_format)
@@ -801,9 +772,9 @@ def generate_excel_contest_rank(rank_users: List[ScpcContestRankUser], contest_i
         for problem, information in item.information.items():
             if information.is_ac:
                 if information.is_first_ac:
-                    worksheet.write_string(row, column, f"""率先AC""", first_ac_format)
+                    worksheet.write_string(row, column, f"率先AC", first_ac_format)
                 else:
-                    worksheet.write_string(row, column, f"""AC""", ac_format)
+                    worksheet.write_string(row, column, f"AC", ac_format)
             else:
                 worksheet.write_string(row, column, "")
             column += 1

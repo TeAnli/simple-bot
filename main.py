@@ -30,7 +30,9 @@ menu_information = """💖 安心Bot 菜单 💖
 /scpc比赛排行 <比赛ID> - 获取指定比赛排行榜和用户信息的excel表格, (无法获取私有比赛)
 /scpc近期更新题目 - 获取近期scpc上更新的题目 包含题目链接url
 
-/牛客比赛 获取近期的牛客比赛
+/牛客比赛 获取近期的牛客比赛列表
+
+/洛谷比赛 获取洛谷平台的比赛列表
 
 /菜单: 展示这个页面
 /关于: 展示Bot信息
@@ -41,12 +43,12 @@ menu_information = """💖 安心Bot 菜单 💖
 def group_message_handler(event: GroupMessageEvent):
     raw = (event.raw_message or "").strip()
     # 优先匹配带斜杠的标准命令，其次是中文关键词
-    if "/菜单" == raw or "菜单" == raw:
+    if "/菜单" == raw or "菜单" == raw or "/help" == raw or "help" == raw:
         asyncio.create_task(
             bot.api.post_group_msg(event.group_id, text=menu_information)
         )
         return
-    if "/关于" == raw or "关于" == raw:
+    if "/关于" == raw or "关于" == raw or "/about" == raw or "about" == raw:
         asyncio.create_task(
             bot.api.post_group_msg(event.group_id, text=about_information)
         )
