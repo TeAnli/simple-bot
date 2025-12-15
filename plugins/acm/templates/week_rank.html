@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="week-rank">
+    <div class="list">
+        {% for u in users %}
+        <div class="row">
+            <div class="rank" style="background:{{ u.rank_bg }}">{{ u.rank }}</div>
+            <div class="avatar-wrap">
+                <img class="avatar" src="{{ u.avatar }}" onerror="this.style.display='none'; this.parentNode.classList.add('fallback')"/>
+                <div class="avatar-fallback">{{ u.avatar_char }}</div>
+            </div>
+            <div class="user">
+                <span class="username">{{ u.username }}</span>
+                {% if u.title_name and u.title_name != 'None' %}
+                <div class="pill" style="color:rgb({{ u.title_rgb }});border-color:rgb({{ u.title_rgb }});background:rgba({{ u.title_rgb }},0.12)">{{ u.title_name }}</div>
+                {% endif %}
+            </div>
+            <div class="ac">AC {{ u.ac }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

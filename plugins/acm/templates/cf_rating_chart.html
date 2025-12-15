@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .chart-container {
+        position: relative;
+        height: 400px;
+        width: 100%;
+        background: #fff;
+        padding: 10px;
+        border-radius: 8px;
+    }
+</style>
+
+<div class="chart-container">
+    <canvas id="ratingChart"></canvas>
+</div>
+
+<script>
+    const ctx = document.getElementById('ratingChart').getContext('2d');
+    const labels = {{ labels | tojson }};
+    const data = {{ data | tojson }};
+    const meta = {{ meta | tojson }};
+
+    // Standard Codeforces Colors
+    const CF_COLORS = {
+        newbie: '#808080',       // < 1200
+        pupil: '#008000',        // 1200-1399
+        specialist: '#03a89e',   // 1400-1599
+        expert: '#0000ff',       // 1600-1899
+        candidateMaster: '#aa00aa', // 1900-2099
+        master: '#ff8c00',       // 2100-2299
+        internationalMaster: '#ff8c00', // 2300-2399 (Same color family usually)
+        grandmaster: '#ff0000',  // 2400-2599
+        internationalGrandmaster: '#ff0000', // 2600-2999
+        legendaryGrandmaster: '#ff0000' // >= 3000
+    };
+
+    const getRatingColor = (rating) => {
+        if (rating < 1200) return CF_COLORS.newbie;
+        if (rating < 1400) return CF_COLORS.pupil;
+        if (rating < 1600) return CF_COLORS.specialist;
+        if (rating < 1900) return CF_COLORS.expert;
+        if (rating < 2100) return CF_COLORS.candidateMaster;
+        if (rating < 2400) return CF_COLORS.master;
+        return CF_COLORS.grandmaster;
+    };
+
+    // Background Plugin to draw colored tiers
+    const backgroundPlugin = {
+        id: 'customCanvasBackgroundColor',
+        beforeDraw: (chart, args, options) => {
+            const {ctx, chartArea: {top, bottom, left, right, width, height}, scales: {x, y}} = chart;
+            
+            const tiers = [
+                { min: 0, max: 1200, color: 'rgba(204, 204, 204, 0.2)' }, // Newbie (Gray)
+                { min: 1200, max: 1400, color: 'rgba(119, 255, 119, 0.2)' }, // Pupil (Green)
+                { min: 1400, max: 1600, color: 'rgba(119, 221, 187, 0.2)' }, // Specialist (Cyan)
+                { min: 1600, max: 1900, color: 'rgba(170, 170, 255, 0.2)' }, // Expert (Blue)
+                { min: 1900, max: 2100, color: 'rgba(255, 136, 255, 0.2)' }, // CM (Purple)
+                { min: 2100, max: 2300, color: 'rgba(255, 204, 136, 0.2)' }, // Master (Orange)
+                { min: 2300, max: 2400, color: 'rgba(255, 187, 85, 0.2)' },  // IM (Orange)
+                { min: 2400, max: 2600, color: 'rgba(255, 119, 119, 0.2)' }, // GM (Red)
+                { min: 2600, max: 3000, color: 'rgba(255, 51, 51, 0.2)' },   // IGM (Red)
+                { min: 3000, max: 10000, color: 'rgba(170, 0, 0, 0.2)' }     // LGM (Dark Red)
+            ];
+
+            ctx.save();
+            tiers.forEach(tier => {
+                let yTop = y.getPixelForValue(tier.max);
+                let yBottom = y.getPixelForValue(tier.min);
+
+                // Check visibility
+                if (yBottom < top || yTop > bottom) return;
+
+                // Clamp to chart area
+                // Note: Pixel values increase downwards. yTop (max rating) is smaller pixel value.
+                // We want to fill from max(yTop, top) to min(yBottom, bottom)
+                
+                const drawTop = Math.max(top, yTop);
+                const drawBottom = Math.min(bottom, yBottom);
+
+                if (drawBottom > drawTop) {
+                    ctx.fillStyle = tier.color;
+                    ctx.fillRect(left, drawTop, width, drawBottom - drawTop);
+                }
+            });
+            ctx.restore();
+        }
+    };
+
+    // Plugin to draw latest rating text
+    const latestRatingPlugin = {
+        id: 'latestRatingPlugin',
+        afterDatasetsDraw: (chart) => {
+            const { ctx } = chart;
+            const meta = chart.getDatasetMeta(0);
+            if (!meta.data || meta.data.length === 0) return;
+
+            const lastIndex = meta.data.length - 1;
+            const lastPoint = meta.data[lastIndex];
+            const ratingValue = data[lastIndex];
+            const ratingColor = getRatingColor(ratingValue);
+
+            ctx.save();
+            
+            const text = ratingValue.toString();
+            ctx.font = 'bold 12px Arial';
+            const paddingX = 6;
+            const paddingY = 4;
+            const textWidth = ctx.measureText(text).width;
+            const boxWidth = textWidth + paddingX * 2;
+            const boxHeight = 22;
+            
+            const x = lastPoint.x + 10; // Offset from point
+            const y = lastPoint.y - boxHeight / 2;
+
+            // Draw badge background (rounded rect)
+            ctx.fillStyle = ratingColor;
+            
+            // Rounded rect
+            const radius = 4;
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + boxWidth - radius, y);
+            ctx.quadraticCurveTo(x + boxWidth, y, x + boxWidth, y + radius);
+            ctx.lineTo(x + boxWidth, y + boxHeight - radius);
+            ctx.quadraticCurveTo(x + boxWidth, y + boxHeight, x + boxWidth - radius, y + boxHeight);
+            ctx.lineTo(x + radius, y + boxHeight);
+            ctx.quadraticCurveTo(x, y + boxHeight, x, y + boxHeight - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+            ctx.fill();
+
+            // Draw text
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x + paddingX, lastPoint.y);
+            
+            ctx.restore();
+        }
+    };
+
+    const chart = new Chart(ctx, {
+        type: 'line',
+        plugins: [backgroundPlugin, latestRatingPlugin],
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '积分',
+                data: data,
+                borderColor: function(context) {
+                    const chart = context.chart;
+                    const {ctx, chartArea, scales} = chart;
+                    if (!chartArea) {
+                        return null;
+                    }
+                    
+                    const y = scales.y;
+                    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                    
+                    // Helper to get offset (0 to 1) for a rating value
+                    // Chart.js gradient stops are 0 (start) to 1 (end). 
+                    // Our gradient is bottom (0) to top (height).
+                    // So we map rating to pixel, then to ratio.
+                    // Wait, createLinearGradient(x0, y0, x1, y1). 
+                    // If we use (0, chartArea.bottom, 0, chartArea.top), then 0 is bottom (low rating), 1 is top (high rating).
+                    // But we need to map specific rating values to these 0-1 offsets.
+                    
+                    const getOffset = (val) => {
+                        const pixel = y.getPixelForValue(val);
+                        // pixel is coordinate from top. 
+                        // chartArea.bottom is high pixel value. chartArea.top is low pixel value.
+                        // We want 0 at bottom, 1 at top.
+                        // ratio = (chartArea.bottom - pixel) / (chartArea.bottom - chartArea.top)
+                        let ratio = (chartArea.bottom - pixel) / (chartArea.bottom - chartArea.top);
+                        return Math.max(0, Math.min(1, ratio));
+                    };
+
+                    // Add stops for each boundary
+                    // Colors are applied between boundaries. 
+                    // Gradient transitions smoothly. To make hard cuts, we need two stops per boundary.
+                    // But smooth transition is usually nicer for rating graphs. 
+                    // Let's try hard cuts to match "tiers".
+                    
+                    const addStops = (rating, colorBelow, colorAbove) => {
+                         const offset = getOffset(rating);
+                         gradient.addColorStop(offset, colorBelow);
+                         gradient.addColorStop(offset, colorAbove);
+                    };
+                    
+                    // We need to order from bottom (0) to top (1).
+                    // But actually we can just add stops.
+                    // Let's use smooth transitions or hard cuts? 
+                    // Hard cuts look like "zones".
+                    
+                    gradient.addColorStop(0, CF_COLORS.newbie);
+                    addStops(1200, CF_COLORS.newbie, CF_COLORS.pupil);
+                    addStops(1400, CF_COLORS.pupil, CF_COLORS.specialist);
+                    addStops(1600, CF_COLORS.specialist, CF_COLORS.expert);
+                    addStops(1900, CF_COLORS.expert, CF_COLORS.candidateMaster);
+                    addStops(2100, CF_COLORS.candidateMaster, CF_COLORS.master);
+                    addStops(2400, CF_COLORS.master, CF_COLORS.grandmaster);
+                    gradient.addColorStop(1, CF_COLORS.grandmaster);
+                    
+                    return gradient;
+                },
+                borderWidth: 2,
+                pointRadius: 3,
+                pointBackgroundColor: data.map(r => getRatingColor(r)),
+                pointBorderColor: '#fff',
+                fill: {
+                    target: 'origin',
+                    above: 'rgba(200, 200, 200, 0.1)' // Generic fill
+                },
+                tension: 0.1
+            }]
+        },
+        options: {
+            layout: {
+                padding: {
+                    right: 50
+                }
+            },
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                title: {
+                    display: true,
+                    text: '{{ handle }} 的 Rating 变化图',
+                    font: { size: 16 }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const idx = context.dataIndex;
+                            const m = meta[idx];
+                            return [
+                                `积分: ${m.new} (${m.new >= m.old ? '+' : ''}${m.new - m.old})`,
+                                `排名: ${m.rank}`,
+                                `比赛: ${m.contest}`
+                            ];
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    grid: { color: '#f0f0f0' }
+                },
+                x: {
+                    grid: { display: false },
+                    ticks: { maxTicksLimit: 10 }
+                }
+            },
+            animation: false
+        }
+    });
+</script>
+{% endblock %}

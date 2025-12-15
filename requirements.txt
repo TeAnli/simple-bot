@@ -1,3 +1,6 @@
-ncatbot==4.3.1.post1
-requests~=2.32.5
-httpx~=0.28.1
+ncatbot
+requests
+httpx
+jinja2
+beautifulsoup4
+playwright

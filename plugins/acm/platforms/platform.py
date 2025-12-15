@@ -31,29 +31,3 @@ class Platform(metaclass=ABCMeta):
             比赛列表
         """
         pass
-
-    # @abstractmethod
-    # async def get_rating(self, name: str) -> Rating:
-    #     """
-    #     获取用户积分
-
-    #     Args:
-    #         name: 用户名
-
-    #     Returns:
-    #         积分信息
-    #     """
-    #     pass
-
-    # @abstractmethod
-    # async def get_user_information(self, name: str):
-    #     """
-    #     获取用户信息
-
-    #     Args:
-    #         name: 用户名
-
-    #     Returns:
-    #         用户信息
-    #     """
-    #     pass

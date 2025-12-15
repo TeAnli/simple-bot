@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="contests">
+    <div class="list">
+        {% for c in contests %}
+        <div class="row">
+            <div class="title">
+                <span class="state">{{ c.icon }} {{ c.state }}</span>
+                <span class="name">{{ c.name }}</span>
+                {% if c.id %}
+                <span class="pill">ID {{ c.id }}</span>
+                {% endif %}
+            </div>
+            <div class="meta">开始: {{ c.start_str }} · {{ c.remaining_label }}: {{ c.remaining_str }} · 时长: {{ c.duration_str }} 小时</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

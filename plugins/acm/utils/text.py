@@ -1,8 +1,7 @@
+import math
 from datetime import datetime
 
-import math
-
-from plugins.scpc.platforms.platform import Contest
+from ..platforms.platform import Contest
 
 
 def format_timestamp(timestamp: int, formatter: str = "%Y-%m-%d %H:%M") -> str:
@@ -73,104 +72,13 @@ def state_icon(state: str) -> str:
     return mapping.get(state, "ℹ️")
 
 
-def format_contest_text(
-    name: str,
-    contest_id: int | None,
-    state: str,
-    start_ts: int,
-    remaining_label: str,
-    remaining_secs: int,
-    duration_secs: int,
-    include_id: bool = True,
-    contest_url: str | None = None,
-) -> str:
+def calculate_accept_ratio(passed: int, total: int) -> float:
     """
-    概述:
-    统一格式化各平台的比赛信息为展示文本
-
-    参数:
-    - name: 比赛名称
-    - contest_id: 比赛 ID（可为 None）
-    - state: 比赛状态（即将开始/进行中/已结束）
-    - start_ts: 开始时间戳（秒）
-    - remaining_label: 剩余时间标签文案
-    - remaining_secs: 剩余时间（秒）
-    - duration_secs: 比赛持续时间（秒）
-    - include_id: 是否在标题行中包含比赛 ID
-    - contest_url: 比赛链接（可选）
-
-    返回:
-    - 格式化后的比赛信息多行文本
+    计算通过率
     """
-    icon = state_icon(state)
-    start_time_str = format_timestamp(start_ts)
-    duration_hours = format_hours(duration_secs, precision=1)
-    remaining_str = format_relative_hours(remaining_secs, precision=1)
-
-    title_line = (
-        f"{name}"
-        if not include_id or contest_id is None
-        else f"{name} (ID: {contest_id})"
-    )
-    lines = [
-        "比赛名称:",
-        f"{title_line}",
-        f"状态: {icon} {state}",
-        f"开始时间: {start_time_str}",
-        f"{remaining_label}: {remaining_str}",
-        f"比赛时长: {duration_hours} 小时",
-    ]
-    if contest_url:
-        lines.append(f"比赛地址: {contest_url}")
-    return "\n".join(lines)
-
-
-def parse_scpc_time(value) -> int:
-    """
-    解析来自后端GMT未经格式化的时间字段为时间戳
-
-    Args:
-    - value: 原始时间值（可能是秒 数字ISO 字符串等）
-
-    Returns:
-    - 解析得到的时间戳（秒）无法解析返回 0
-    """
-    if value is None:
-        return 0
-    try:
-        if isinstance(value, (int, float)):
-            return int(value)
-        if isinstance(value, str):
-            try:
-                dt = datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%f%z")
-                return int(dt.timestamp())
-            except Exception:
-                pass
-            try:
-                v = value.replace("Z", "+00:00")
-                dt = datetime.fromisoformat(v)
-                return int(dt.timestamp())
-            except Exception:
-                pass
-    except Exception:
-        pass
-    return 0
-
-
-def calculate_accept_ratio(total_count: int, accept_count: int) -> float:
-    """
-    计算比率
-
-    Args:
-    - total_count: 总提交数
-    - accept_count: 通过数
-
-    Returns:
-    - 通过率（浮点数）当 `total_count` 为 0 返回 0.0
-    """
-    if total_count == 0:
+    if total == 0:
         return 0.0
-    return accept_count / total_count
+    return (passed / total) * 100
 
 
 async def broadcast_text(api_client, group_listeners: dict, text: str):
@@ -185,6 +93,7 @@ async def broadcast_text(api_client, group_listeners: dict, text: str):
     for gid, enabled in group_listeners.items():
         if enabled:
             await api_client.send_group_text(gid, text)
+
 
 def extract_contest_timing(contest: Contest, now_ts: int):
     """
@@ -224,4 +133,3 @@ def extract_contest_timing(contest: Contest, now_ts: int):
             remaining,
         )
     return None
-
