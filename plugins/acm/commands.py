@@ -1,3 +1,4 @@
+import asyncio
 import os
 import random
 from typing import TYPE_CHECKING
@@ -222,10 +223,50 @@ async def get_scpc_contest_rank_logic(
         await plugin.api.send_group_text(event.group_id, "生成排行表格失败")
 
 
+async def get_all_recent_contests_logic(plugin: "SCPCPlugin", event: GroupMessageEvent):
+    LOG.info(f"User {event.user_id} requesting all recent contests")
+
+    tasks = [
+        plugin.scpc_platform.get_recent_contests(),
+        plugin.codeforces_platform.get_contests(),
+        plugin.nowcoder_platform.get_contests(),
+        plugin.luogu_platform.get_contests(),
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    scpc_contests = results[0] if not isinstance(results[0], Exception) else []
+    cf_contests = results[1] if not isinstance(results[1], Exception) else []
+    nowcoder_contests = results[2] if not isinstance(results[2], Exception) else []
+    luogu_contests = results[3] if not isinstance(results[3], Exception) else []
+
+    items = []
+    if scpc_contests:
+        items.extend(plugin._build_contest_texts(scpc_contests, True, "scpc"))
+    if cf_contests:
+        items.extend(plugin._build_contest_texts(cf_contests, False, "cf"))
+    if nowcoder_contests:
+        items.extend(plugin._build_contest_texts(nowcoder_contests, False, "nowcoder"))
+    if luogu_contests:
+        items.extend(plugin._build_contest_texts(luogu_contests, False, "luogu"))
+
+    items.sort(key=lambda x: x[0])
+
+    if not items:
+        await plugin.api.send_group_text(event.group_id, "近期没有比赛")
+        return
+
+    header = "🏆 近期比赛预告 🏆\n"
+    content = "\n\n".join([t for _, t in items])
+    msg = header + content
+
+    await plugin.api.send_group_text(event.group_id, msg)
+
+
 async def get_help_logic(plugin: "SCPCPlugin", event: GroupMessageEvent):
     commands_list = [
         {"name": "/help", "desc": "获取帮助信息", "is_admin": False},
-        {"name": "/来个男神", "desc": "随机发送一张男神照片", "is_admin": False},
+        {"name": "/近期比赛", "desc": "获取所有平台近期比赛", "is_admin": False},
+        {"name": "/随机老婆", "desc": "随机发送一张二次元图片", "is_admin": False},
         {"name": "/开启比赛提醒", "desc": "开启本群比赛提醒", "is_admin": True},
         {"name": "/关闭比赛提醒", "desc": "关闭本群比赛提醒", "is_admin": True},
         {"name": "/scpc用户 [username]", "desc": "获取SCPC用户信息", "is_admin": False},

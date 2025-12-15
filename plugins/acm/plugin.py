@@ -223,6 +223,11 @@ class SCPCPlugin(NcatBotPlugin):
     async def get_help(self, event: GroupMessageEvent):
         await commands.get_help_logic(self, event)
 
+    @command_registry.command("近期比赛", description="获取所有平台近期比赛")
+    @group_filter
+    async def get_all_recent_contests(self, event: GroupMessageEvent):
+        await commands.get_all_recent_contests_logic(self, event)
+
     # ----------------------------
     @command_registry.command("scpc比赛排行", description="生成比赛的排行榜Excel表格")
     @group_filter
