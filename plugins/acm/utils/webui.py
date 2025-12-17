@@ -18,6 +18,9 @@ class WebUI:
             os.path.dirname(os.path.dirname(__file__)), "templates"
         )
         self.env = Environment(loader=FileSystemLoader(self.template_dir))
+        self.env.filters["datetime"] = lambda ts: datetime.datetime.fromtimestamp(
+            ts
+        ).strftime("%Y-%m-%d %H:%M")
 
     def _hex_to_rgb_str(self, h: str, default: str = "0,150,60") -> str:
         h = (h).strip().lstrip("#")
@@ -144,6 +147,10 @@ class WebUI:
     def render_help(self, commands: list, version: str) -> str:
         template = self.env.get_template("help.html")
         return template.render(title="帮助菜单", commands=commands, version=version)
+
+    def render_updated_problems(self, problems: list) -> str:
+        template = self.env.get_template("updated_problems.html")
+        return template.render(title="SCPC 近期更新题目", problems=problems)
 
 
 # Global instance

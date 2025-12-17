@@ -4,7 +4,9 @@ import random
 from typing import TYPE_CHECKING
 
 from ncatbot.core import GroupMessageEvent
-from ncatbot.utils import get_log
+from ncatbot.core.helper.forward_constructor import ForwardConstructor
+from ncatbot.core.event.message_segment import MessageArray, Text, Image
+from ncatbot.utils import get_log, ncatbot_config
 
 from .platforms.codeforces import (
     render_codeforces_rating_chart,
@@ -14,6 +16,7 @@ from .platforms.scpc import (
     generate_excel_contest_rank,
     render_scpc_user_info_image,
     render_scpc_week_rank_image,
+    render_scpc_updated_problems_image,
     renderer,
 )
 from .utils.ai import ask_deepseek, DEFAULT_SYSTEM_PROMPT
@@ -150,10 +153,30 @@ async def get_recent_scpc_updated_problems_logic(
         await plugin.api.send_group_text(event.group_id, "近期没有更新题目")
         return
 
-    msg = "📝 SCPC 近期更新题目 📝\n\n"
-    for p in problems:
-        msg += f"[{p.problem_id}] {p.title}\n{p.url}\n\n"
-    await plugin.api.send_group_text(event.group_id, msg)
+    image_path = await render_scpc_updated_problems_image(problems)
+
+    try:
+        fcr = ForwardConstructor(user_id=ncatbot_config.bt_uin, nickname="SCPC Bot")
+        fcr.attach_text("📝 SCPC 近期更新题目 📝")
+
+        if image_path:
+            fcr.attach_image(image_path)
+
+        for p in problems:
+            content = f"[{p.problem_id}] {p.title}\n{p.url}"
+            fcr.attach_text(content)
+
+        forward = fcr.to_forward()
+        await plugin.api.post_group_forward_msg(event.group_id, forward)
+    except Exception as e:
+        LOG.error(f"Send forward message failed: {e}")
+        if image_path:
+            await plugin.api.send_group_image(event.group_id, image_path)
+
+        msg = "📝 SCPC 近期更新题目 📝\n\n"
+        for p in problems:
+            msg += f"[{p.problem_id}] {p.title}\n{p.url}\n\n"
+        await plugin.api.send_group_text(event.group_id, msg)
 
 
 async def get_codeforces_user_info_logic(

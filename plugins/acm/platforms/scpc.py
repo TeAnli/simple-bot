@@ -368,6 +368,17 @@ async def render_scpc_week_rank_image(users: list) -> Optional[str]:
         return None
 
 
+async def render_scpc_updated_problems_image(problems: list) -> Optional[str]:
+    try:
+        html = webui_helper.render_updated_problems(problems)
+        out_path = os.path.abspath("plugins/acm/assets/scpc_updated_problems.png")
+        success = await renderer.render_html(html, out_path)
+        return out_path if success else None
+    except Exception as e:
+        LOG.error(f"Render SCPC updated problems failed: {e}")
+        return None
+
+
 async def render_scpc_user_info_image(user: ScpcUser) -> Optional[str]:
     try:
         ac_count = len(user.solved_list)
